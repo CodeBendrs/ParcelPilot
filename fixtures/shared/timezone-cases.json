@@ -1,0 +1,19 @@
+{
+  "description": "Wall-clock minute → UTC instant cases shared by the Swift (ParcelPilotKit WallClock) and TypeScript (functions/src/optimization/time.ts) implementations. Policy: nonexistent local times shift forward by the DST gap; ambiguous local times use the earlier instant. 2026 DST: starts Sunday 8 March, ends Sunday 1 November. America/Edmonton is deliberately absent: tzdata 2026c records Alberta moving to permanent UTC-6 in 2026 while older databases (e.g. Node 22 ICU 2024b) do not, so its expected values depend on the database version — see docs/ARCHITECTURE.md (time-zone authority).",
+  "cases": [
+    { "name": "Toronto ordinary morning", "timeZone": "America/Toronto", "serviceDate": "2026-10-03", "minute": 480, "expectedUTC": "2026-10-03T12:00:00Z", "resolution": "exact" },
+    { "name": "Toronto spring-forward gap 02:30", "timeZone": "America/Toronto", "serviceDate": "2026-03-08", "minute": 150, "expectedUTC": "2026-03-08T07:30:00Z", "resolution": "shiftedForwardFromGap" },
+    { "name": "Toronto fall-back overlap 01:30", "timeZone": "America/Toronto", "serviceDate": "2026-11-01", "minute": 90, "expectedUTC": "2026-11-01T05:30:00Z", "resolution": "earlierOfAmbiguous" },
+    { "name": "Toronto after fall-back 02:30", "timeZone": "America/Toronto", "serviceDate": "2026-11-01", "minute": 150, "expectedUTC": "2026-11-01T07:30:00Z", "resolution": "exact" },
+    { "name": "Vancouver window crossing midnight (01:30 next day)", "timeZone": "America/Vancouver", "serviceDate": "2026-10-03", "minute": 1530, "expectedUTC": "2026-10-04T08:30:00Z", "resolution": "exact" },
+    { "name": "St. John's half-hour offset summer", "timeZone": "America/St_Johns", "serviceDate": "2026-07-15", "minute": 540, "expectedUTC": "2026-07-15T11:30:00Z", "resolution": "exact" },
+    { "name": "Regina has no DST", "timeZone": "America/Regina", "serviceDate": "2026-03-08", "minute": 150, "expectedUTC": "2026-03-08T08:30:00Z", "resolution": "exact" },
+    { "name": "Halifax fall-back overlap", "timeZone": "America/Halifax", "serviceDate": "2026-11-01", "minute": 90, "expectedUTC": "2026-11-01T04:30:00Z", "resolution": "earlierOfAmbiguous" },
+    { "name": "Overnight route reaching fall-back overlap", "timeZone": "America/Toronto", "serviceDate": "2026-10-31", "minute": 1530, "expectedUTC": "2026-11-01T05:30:00Z", "resolution": "earlierOfAmbiguous" },
+    { "name": "Overnight route reaching spring-forward gap", "timeZone": "America/Toronto", "serviceDate": "2026-03-07", "minute": 1590, "expectedUTC": "2026-03-08T07:30:00Z", "resolution": "shiftedForwardFromGap" },
+    { "name": "Whitehorse permanent UTC-7", "timeZone": "America/Whitehorse", "serviceDate": "2026-03-08", "minute": 150, "expectedUTC": "2026-03-08T09:30:00Z", "resolution": "exact" },
+    { "name": "St. John's spring-forward gap", "timeZone": "America/St_Johns", "serviceDate": "2026-03-08", "minute": 150, "expectedUTC": "2026-03-08T06:00:00Z", "resolution": "shiftedForwardFromGap" },
+    { "name": "St. John's fall-back overlap", "timeZone": "America/St_Johns", "serviceDate": "2026-11-01", "minute": 90, "expectedUTC": "2026-11-01T04:00:00Z", "resolution": "earlierOfAmbiguous" },
+    { "name": "Winnipeg year boundary", "timeZone": "America/Winnipeg", "serviceDate": "2026-12-31", "minute": 1439, "expectedUTC": "2027-01-01T05:59:00Z", "resolution": "exact" }
+  ]
+}

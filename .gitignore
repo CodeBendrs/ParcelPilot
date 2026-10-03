@@ -1,0 +1,28 @@
+# Build output
+build/
+DerivedData/
+Packages/ParcelPilotKit/.build/
+Packages/ParcelPilotKit/.swiftpm/
+*.xcresult
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
+# Local configuration (never commit)
+Config/Secrets.xcconfig
+ParcelPilot/GoogleService-Info.plist
+
+# Firebase / Node
+firebase/node_modules/
+firebase/functions/node_modules/
+firebase/functions/lib/
+firebase/functions/.env.*
+!firebase/functions/.env.local
+# Production function parameters: usage caps and the runtime service account, no secrets.
+!firebase/functions/.env.parcelpilot-976f6
+firebase/*.log
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+.DS_Store

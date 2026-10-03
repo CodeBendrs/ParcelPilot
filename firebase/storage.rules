@@ -1,0 +1,25 @@
+rules_version = '2';
+
+// Proof-of-delivery photos only: users/{uid}/routes/{routeId}/pod/{photoId}.jpg
+// Owner-only, JPEG only, < 5 MB, no overwrites (uploads are idempotent by photo ID; the app checks
+// for an existing object before retrying), owner may delete.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /users/{uid}/routes/{routeId}/pod/{fileName} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      // Overwriting an object is evaluated as `create` with an existing resource; refuse it.
+      allow create: if request.auth != null && request.auth.uid == uid
+        && resource == null
+        && routeId.matches('^[A-Za-z0-9_-]{1,64}$')
+        && fileName.matches('^[A-Za-z0-9_-]{1,64}[.]jpg$')
+        && request.resource.size > 0
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType == 'image/jpeg';
+      allow update: if false;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

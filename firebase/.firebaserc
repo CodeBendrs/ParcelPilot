@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "default": "demo-parcelpilot",
+    "prod": "parcelpilot-976f6"
+  }
+}

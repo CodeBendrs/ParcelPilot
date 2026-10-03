@@ -1,0 +1,264 @@
+rules_version = '2';
+
+// ParcelPilot Firestore rules.
+//
+// * Everything lives under users/{uid}; only that user can read or write it.
+// * Client documents are schema-validated (exact key sets, types, sizes, enums).
+// * Delivery outcomes are append-only: create once, then only `voidedAt` may be set, once.
+// * Optimization jobs, locks and usage counters are written only by Cloud Functions (Admin SDK).
+// * Provider (Google) coordinates must carry an expiry no more than 31 days ahead.
+// * A stop may only be marked `verified` with a Google resolution — synthetic demo/emulator
+//   locations can never masquerade as verified real addresses.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function isStr(v, max) {
+      return v is string && v.size() <= max;
+    }
+
+    function optStr(m, key, max) {
+      return !(key in m) || isStr(m[key], max);
+    }
+
+    function optTs(m, key) {
+      return !(key in m) || m[key] is timestamp;
+    }
+
+    function optInt(m, key, lo, hi) {
+      return !(key in m) || (m[key] is int && m[key] >= lo && m[key] <= hi);
+    }
+
+    function isId(v) {
+      return v is string && v.matches('^[A-Za-z0-9_-]{1,64}$');
+    }
+
+    function validAddress(a) {
+      return a is map
+        && a.keys().hasOnly(['recipientName', 'unit', 'unitDesignator', 'civicNumber', 'streetName', 'deliveryInstallation', 'municipality', 'province', 'postalCode', 'country', 'additionalLines'])
+        && optStr(a, 'recipientName', 120) && optStr(a, 'unit', 20) && optStr(a, 'unitDesignator', 20)
+        && optStr(a, 'civicNumber', 20) && optStr(a, 'streetName', 160) && optStr(a, 'deliveryInstallation', 120)
+        && optStr(a, 'municipality', 80) && optStr(a, 'postalCode', 10) && optStr(a, 'country', 60)
+        && (!('province' in a) || a.province in ['NL', 'PE', 'NS', 'NB', 'QC', 'ON', 'MB', 'SK', 'AB', 'BC', 'YT', 'NT', 'NU'])
+        && (!('additionalLines' in a) || (a.additionalLines is list && a.additionalLines.size() <= 10));
+    }
+
+    function validLocated(l) {
+      return l is map
+        && l.keys().hasOnly(['point', 'source', 'expiresAt'])
+        && l.point is map && l.point.keys().hasOnly(['latitude', 'longitude'])
+        && l.point.latitude is number && l.point.latitude >= -90 && l.point.latitude <= 90
+        && l.point.longitude is number && l.point.longitude >= -180 && l.point.longitude <= 180
+        && l.source in ['deviceLocation', 'driverPin', 'providerGeocode', 'demoSynthetic', 'emulatorFake']
+        && optTs(l, 'expiresAt')
+        && (l.source != 'providerGeocode'
+            || ('expiresAt' in l && l.expiresAt <= request.time + duration.value(31, 'd')));
+    }
+
+    function validPlace(p) {
+      return p is map
+        && p.keys().hasOnly(['label', 'address', 'located', 'placeID'])
+        && isStr(p.label, 300)
+        && (!('address' in p) || validAddress(p.address))
+        && (!('located' in p) || validLocated(p.located))
+        && optStr(p, 'placeID', 300);
+    }
+
+    function validBreak(b) {
+      return b is map && b.keys().hasOnly(['earliestStartMinute', 'latestStartMinute', 'durationSeconds'])
+        && b.earliestStartMinute is int && b.latestStartMinute is int && b.durationSeconds is int
+        && b.earliestStartMinute >= 0 && b.earliestStartMinute <= b.latestStartMinute && b.latestStartMinute < 2880
+        && b.durationSeconds > 0 && b.durationSeconds <= 4 * 3600;
+    }
+
+    function validSummary(s) {
+      return s is map && s.keys().hasOnly(['delivered', 'failed', 'skipped', 'excluded', 'pending', 'stopCount', 'packageCount', 'firstOutcomeAt', 'lastOutcomeAt'])
+        && s.delivered is int && s.failed is int && s.skipped is int && s.excluded is int && s.pending is int
+        && s.stopCount is int && s.packageCount is int && optTs(s, 'firstOutcomeAt') && optTs(s, 'lastOutcomeAt');
+    }
+
+    function validPlannedDistance(d) {
+      return d is map && d.keys().hasOnly(['meters', 'provider', 'calculatedAt', 'expiresAt'])
+        && d.meters is number && d.provider in ['google', 'demo', 'emulatorFake']
+        && d.calculatedAt is timestamp && d.expiresAt is timestamp
+        && d.expiresAt <= request.time + duration.value(2, 'd');
+    }
+
+    function validRoute(d, routeId) {
+      return d.keys().hasOnly(['id', 'schemaVersion', 'name', 'status', 'createdAt', 'updatedAt', 'serviceDate', 'timeZoneID', 'departureMinute',
+                               'start', 'end', 'returnToStart', 'defaultServiceSeconds', 'breakRule', 'objective', 'considerTraffic',
+                               'inputRevision', 'appliedRequestID', 'appliedRevision', 'nextStopOverrideID', 'startedAt', 'completedAt',
+                               'archivedAt', 'summary', 'plannedDistance'])
+        && d.id == routeId && d.schemaVersion == 1
+        && isStr(d.name, 80) && d.name.size() > 0
+        && d.status in ['planning', 'active', 'completed', 'archived']
+        && d.createdAt is timestamp && d.updatedAt is timestamp
+        && d.serviceDate is string && d.serviceDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && d.timeZoneID is string && d.timeZoneID.matches('^America/[A-Za-z_-]{3,30}$')
+        && d.departureMinute is int && d.departureMinute >= 0 && d.departureMinute < 2880
+        && (!('start' in d) || validPlace(d.start))
+        && (!('end' in d) || validPlace(d.end))
+        && d.returnToStart is bool
+        && d.defaultServiceSeconds is int && d.defaultServiceSeconds >= 0 && d.defaultServiceSeconds <= 3600
+        && (!('breakRule' in d) || validBreak(d.breakRule))
+        && d.objective in ['balanced', 'fastest']
+        && d.considerTraffic is bool
+        && d.inputRevision is int && d.inputRevision >= 1
+        && optStr(d, 'appliedRequestID', 64) && optInt(d, 'appliedRevision', 1, 1000000000) && optStr(d, 'nextStopOverrideID', 64)
+        && optTs(d, 'startedAt') && optTs(d, 'completedAt') && optTs(d, 'archivedAt')
+        && (!('summary' in d) || validSummary(d.summary))
+        && (!('plannedDistance' in d) || validPlannedDistance(d.plannedDistance));
+    }
+
+    function validResolution(r) {
+      return r is map && r.keys().hasOnly(['provider', 'placeID', 'located', 'match', 'resolvedAt'])
+        && (!('provider' in r) || r.provider in ['google', 'demo', 'emulatorFake'])
+        && optStr(r, 'placeID', 300)
+        && (!('located' in r) || validLocated(r.located))
+        && r.match in ['building', 'buildingWithDifferences', 'street', 'postalArea', 'municipality', 'conflict', 'notFound', 'synthetic', 'driverPin']
+        && r.resolvedAt is timestamp;
+    }
+
+    function validWindow(w) {
+      return w is map && w.keys().hasOnly(['kind', 'startMinute', 'endMinute'])
+        && w.kind in ['hard', 'softDeadline']
+        && w.endMinute is int && w.endMinute >= 0 && w.endMinute < 2880
+        && (w.kind != 'hard' || ('startMinute' in w && w.startMinute is int && w.startMinute >= 0 && w.startMinute < w.endMinute))
+        && optInt(w, 'startMinute', 0, 2879);
+    }
+
+    function validStop(d, stopId) {
+      return d.keys().hasOnly(['id', 'schemaVersion', 'createdAt', 'updatedAt', 'address', 'destinationKey', 'addressStatus', 'resolution',
+                               'reviewReasons', 'sequence', 'pin', 'timeWindow', 'serviceSeconds', 'notes'])
+        && d.id == stopId && d.schemaVersion == 1
+        && d.createdAt is timestamp && d.updatedAt is timestamp
+        && validAddress(d.address)
+        && isStr(d.destinationKey, 400)
+        && d.addressStatus in ['verified', 'driverConfirmed', 'pendingVerification', 'needsReview', 'unresolvable', 'demoSynthetic']
+        && (!('resolution' in d) || validResolution(d.resolution))
+        && (d.addressStatus != 'verified' || ('resolution' in d && d.resolution.get('provider', '') == 'google' && d.resolution.match == 'building'))
+        && d.reviewReasons is list && d.reviewReasons.size() <= 30
+        && d.sequence is number
+        && d.pin in ['none', 'first', 'last']
+        && (!('timeWindow' in d) || validWindow(d.timeWindow))
+        && optInt(d, 'serviceSeconds', 0, 7200)
+        && isStr(d.notes, 2000);
+    }
+
+    function validPackage(d, packageId) {
+      return d.keys().hasOnly(['id', 'schemaVersion', 'stopID', 'createdAt', 'updatedAt', 'trackingID', 'trackingKey', 'recipientName', 'size',
+                               'storageLocation', 'notes', 'source'])
+        && d.id == packageId && d.schemaVersion == 1
+        && isId(d.stopID)
+        && d.createdAt is timestamp && d.updatedAt is timestamp
+        && optStr(d, 'trackingID', 64) && optStr(d, 'trackingKey', 64) && optStr(d, 'recipientName', 120)
+        && (!('size' in d) || d.size in ['envelope', 'small', 'medium', 'large', 'oversize'])
+        && optStr(d, 'storageLocation', 60)
+        && isStr(d.notes, 1000)
+        && d.source in ['scan', 'manual', 'paste', 'csv', 'duplicate'];
+    }
+
+    function validOutcome(d, outcomeId) {
+      return d.keys().hasOnly(['id', 'schemaVersion', 'packageID', 'stopID', 'kind', 'reason', 'note', 'recordedAt', 'voidedAt', 'photoIDs'])
+        && d.id == outcomeId && d.schemaVersion == 1
+        && isId(d.packageID) && isId(d.stopID)
+        && d.kind in ['delivered', 'failed', 'skipped', 'requeued', 'excluded']
+        && (!('reason' in d) || d.reason in ['noOneHome', 'accessIssue', 'addressNotFound', 'refused', 'damaged', 'businessClosed', 'unsafe', 'needsSignature', 'other'])
+        && optStr(d, 'note', 500)
+        && d.recordedAt is timestamp && d.recordedAt <= request.time + duration.value(1, 'h')
+        && d.photoIDs is list && d.photoIDs.size() <= 10;
+    }
+
+    function validPhoto(d, photoId, uid, routeId) {
+      return d.keys().hasOnly(['id', 'schemaVersion', 'stopID', 'packageIDs', 'storagePath', 'contentType', 'byteSize', 'capturedAt'])
+        && d.id == photoId && d.schemaVersion == 1
+        && isId(d.stopID)
+        && d.packageIDs is list && d.packageIDs.size() <= 50
+        && d.storagePath == 'users/' + uid + '/routes/' + routeId + '/pod/' + photoId + '.jpg'
+        && d.contentType == 'image/jpeg'
+        && d.byteSize is int && d.byteSize > 0 && d.byteSize <= 5 * 1024 * 1024
+        && d.capturedAt is timestamp;
+    }
+
+    function validSettings(s) {
+      return s is map && s.keys().hasOnly(['navigationApp', 'distanceUnit', 'defaultServiceSeconds', 'batchScanDefault'])
+        && s.navigationApp in ['appleMaps', 'googleMaps', 'ask']
+        && s.distanceUnit in ['kilometres', 'miles']
+        && s.defaultServiceSeconds is int && s.defaultServiceSeconds >= 0 && s.defaultServiceSeconds <= 3600
+        && s.batchScanDefault is bool;
+    }
+
+    function validUser(d) {
+      return d.keys().hasOnly(['schemaVersion', 'settings', 'createdAt', 'updatedAt'])
+        && d.schemaVersion == 1 && validSettings(d.settings) && d.createdAt is timestamp && d.updatedAt is timestamp;
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && validUser(request.resource.data);
+      // Account deletion goes through the deleteAccount function (Admin SDK).
+      allow delete: if false;
+
+      match /routes/{routeId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isId(routeId) && validRoute(request.resource.data, routeId);
+        allow update: if isOwner(uid) && validRoute(request.resource.data, routeId)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.inputRevision >= resource.data.inputRevision;
+        // Routes are archived, not deleted, so history and outcomes are never orphaned.
+        allow delete: if false;
+
+        match /stops/{stopId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid) && isId(stopId) && validStop(request.resource.data, stopId);
+          allow delete: if isOwner(uid);
+        }
+
+        match /packages/{packageId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid) && isId(packageId) && validPackage(request.resource.data, packageId);
+          allow delete: if isOwner(uid);
+        }
+
+        match /outcomes/{outcomeId} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid) && isId(outcomeId) && validOutcome(request.resource.data, outcomeId)
+            && !('voidedAt' in request.resource.data);
+          // Append-only: an identical replay is a no-op; otherwise only voidedAt may be added, once.
+          allow update: if isOwner(uid) && (
+            request.resource.data.diff(resource.data).affectedKeys().size() == 0
+            || (!('voidedAt' in resource.data)
+                && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voidedAt'])
+                && request.resource.data.voidedAt is timestamp));
+          allow delete: if false;
+        }
+
+        match /photos/{photoId} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid) && isId(photoId) && validPhoto(request.resource.data, photoId, uid, routeId);
+          allow update: if isOwner(uid) && request.resource.data.diff(resource.data).affectedKeys().size() == 0;
+          allow delete: if isOwner(uid);
+        }
+      }
+
+      // Written only by Cloud Functions; the owner may observe job state.
+      match /optimizationRequests/{requestId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+      match /optimizationLocks/{routeId} {
+        allow read, write: if false;
+      }
+      match /usage/{day} {
+        allow read, write: if false;
+      }
+    }
+
+    match /system/{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

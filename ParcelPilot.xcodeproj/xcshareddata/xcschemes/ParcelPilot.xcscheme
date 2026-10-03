@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion = "2700" version = "1.7">
+   <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES">
+      <BuildActionEntries>
+         <BuildActionEntry buildForTesting = "YES" buildForRunning = "YES" buildForProfiling = "YES" buildForArchiving = "YES" buildForAnalyzing = "YES">
+            <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "0A0000000000000000000401" BuildableName = "ParcelPilot.app" BlueprintName = "ParcelPilot" ReferencedContainer = "container:ParcelPilot.xcodeproj"/>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv = "YES" shouldAutocreateTestPlan = "YES">
+      <Testables>
+         <TestableReference skipped = "NO" parallelizable = "NO">
+            <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "0A0000000000000000000402" BuildableName = "ParcelPilotTests.xctest" BlueprintName = "ParcelPilotTests" ReferencedContainer = "container:ParcelPilot.xcodeproj"/>
+         </TestableReference>
+         <TestableReference skipped = "NO" parallelizable = "NO">
+            <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "0A0000000000000000000403" BuildableName = "ParcelPilotUITests.xctest" BlueprintName = "ParcelPilotUITests" ReferencedContainer = "container:ParcelPilot.xcodeproj"/>
+         </TestableReference>
+      </Testables>
+   </TestAction>
+   <LaunchAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle = "0" useCustomWorkingDirectory = "NO" ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES" debugServiceExtension = "internal" allowLocationSimulation = "YES">
+      <BuildableProductRunnable runnableDebuggingMode = "0">
+         <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "0A0000000000000000000401" BuildableName = "ParcelPilot.app" BlueprintName = "ParcelPilot" ReferencedContainer = "container:ParcelPilot.xcodeproj"/>
+      </BuildableProductRunnable>
+      <CommandLineArguments>
+         <CommandLineArgument argument = "-PPUseFirebaseEmulators YES" isEnabled = "NO"/>
+         <CommandLineArgument argument = "-PPFirebaseEmulatorHost 127.0.0.1" isEnabled = "NO"/>
+         <CommandLineArgument argument = "-FIRDebugEnabled" isEnabled = "NO"/>
+      </CommandLineArguments>
+   </LaunchAction>
+   <ProfileAction buildConfiguration = "Release" shouldUseLaunchSchemeArgsEnv = "YES" savedToolIdentifier = "" useCustomWorkingDirectory = "NO" debugDocumentVersioning = "YES">
+      <BuildableProductRunnable runnableDebuggingMode = "0">
+         <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "0A0000000000000000000401" BuildableName = "ParcelPilot.app" BlueprintName = "ParcelPilot" ReferencedContainer = "container:ParcelPilot.xcodeproj"/>
+      </BuildableProductRunnable>
+   </ProfileAction>
+   <AnalyzeAction buildConfiguration = "Debug"/>
+   <ArchiveAction buildConfiguration = "Release" revealArchiveInOrganizer = "YES"/>
+</Scheme>

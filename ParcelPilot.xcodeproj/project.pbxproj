@@ -1,0 +1,708 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0A0000000000000000000101 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000201 /* FirebaseAuth */; };
+		0A0000000000000000000102 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000202 /* FirebaseFirestore */; };
+		0A0000000000000000000103 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000203 /* FirebaseFunctions */; };
+		0A0000000000000000000104 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000204 /* FirebaseStorage */; };
+		0A0000000000000000000105 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000205 /* FirebaseAppCheck */; };
+		0A0000000000000000000106 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000206 /* FirebaseCrashlytics */; };
+		0A0000000000000000000107 /* GoogleMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000207 /* GoogleMaps */; };
+		0A0000000000000000000108 /* ParcelPilotKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000208 /* ParcelPilotKit */; };
+		0A0000000000000000000109 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000209 /* GoogleSignIn */; };
+		0A000000000000000000010A /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 0A000000000000000000020A /* GoogleSignInSwift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0A0000000000000000000301 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0A0000000000000000000401;
+			remoteInfo = ParcelPilot;
+		};
+		0A0000000000000000000302 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0A0000000000000000000401;
+			remoteInfo = ParcelPilot;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0A0000000000000000000501 /* ParcelPilot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ParcelPilot.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A0000000000000000000502 /* ParcelPilotTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ParcelPilotTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A0000000000000000000503 /* ParcelPilotUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ParcelPilotUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A0000000000000000000504 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		0A0000000000000000000505 /* ParcelPilotKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = ParcelPilotKit; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		0A0000000000000000000601 /* Exceptions for "ParcelPilot" folder in "ParcelPilot" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0A0000000000000000000401 /* ParcelPilot */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		0A0000000000000000000701 /* ParcelPilot */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				0A0000000000000000000601 /* Exceptions for "ParcelPilot" folder in "ParcelPilot" target */,
+			);
+			path = ParcelPilot;
+			sourceTree = "<group>";
+		};
+		0A0000000000000000000702 /* ParcelPilotTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ParcelPilotTests;
+			sourceTree = "<group>";
+		};
+		0A0000000000000000000703 /* ParcelPilotUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ParcelPilotUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		0A0000000000000000000801 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A0000000000000000000101 /* FirebaseAuth in Frameworks */,
+				0A0000000000000000000102 /* FirebaseFirestore in Frameworks */,
+				0A0000000000000000000103 /* FirebaseFunctions in Frameworks */,
+				0A0000000000000000000104 /* FirebaseStorage in Frameworks */,
+				0A0000000000000000000105 /* FirebaseAppCheck in Frameworks */,
+				0A0000000000000000000106 /* FirebaseCrashlytics in Frameworks */,
+				0A0000000000000000000107 /* GoogleMaps in Frameworks */,
+				0A0000000000000000000108 /* ParcelPilotKit in Frameworks */,
+				0A0000000000000000000109 /* GoogleSignIn in Frameworks */,
+				0A000000000000000000010A /* GoogleSignInSwift in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0A0000000000000000000802 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0A0000000000000000000803 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0A0000000000000000000901 = {
+			isa = PBXGroup;
+			children = (
+				0A0000000000000000000902 /* Config */,
+				0A0000000000000000000903 /* Packages */,
+				0A0000000000000000000701 /* ParcelPilot */,
+				0A0000000000000000000702 /* ParcelPilotTests */,
+				0A0000000000000000000703 /* ParcelPilotUITests */,
+				0A0000000000000000000904 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		0A0000000000000000000902 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				0A0000000000000000000504 /* Base.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		0A0000000000000000000903 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				0A0000000000000000000505 /* ParcelPilotKit */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		0A0000000000000000000904 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0A0000000000000000000501 /* ParcelPilot.app */,
+				0A0000000000000000000502 /* ParcelPilotTests.xctest */,
+				0A0000000000000000000503 /* ParcelPilotUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0A0000000000000000000401 /* ParcelPilot */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A0000000000000000001101 /* Build configuration list for PBXNativeTarget "ParcelPilot" */;
+			buildPhases = (
+				0A0000000000000000001001 /* Sources */,
+				0A0000000000000000000801 /* Frameworks */,
+				0A0000000000000000001002 /* Resources */,
+				0A0000000000000000001003 /* Upload Crashlytics dSYMs */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0A0000000000000000000701 /* ParcelPilot */,
+			);
+			name = ParcelPilot;
+			packageProductDependencies = (
+				0A0000000000000000000201 /* FirebaseAuth */,
+				0A0000000000000000000202 /* FirebaseFirestore */,
+				0A0000000000000000000203 /* FirebaseFunctions */,
+				0A0000000000000000000204 /* FirebaseStorage */,
+				0A0000000000000000000205 /* FirebaseAppCheck */,
+				0A0000000000000000000206 /* FirebaseCrashlytics */,
+				0A0000000000000000000207 /* GoogleMaps */,
+				0A0000000000000000000208 /* ParcelPilotKit */,
+				0A0000000000000000000209 /* GoogleSignIn */,
+				0A000000000000000000020A /* GoogleSignInSwift */,
+			);
+			productName = ParcelPilot;
+			productReference = 0A0000000000000000000501 /* ParcelPilot.app */;
+			productType = "com.apple.product-type.application";
+		};
+		0A0000000000000000000402 /* ParcelPilotTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A0000000000000000001102 /* Build configuration list for PBXNativeTarget "ParcelPilotTests" */;
+			buildPhases = (
+				0A0000000000000000001004 /* Sources */,
+				0A0000000000000000000802 /* Frameworks */,
+				0A0000000000000000001005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0A0000000000000000001201 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0A0000000000000000000702 /* ParcelPilotTests */,
+			);
+			name = ParcelPilotTests;
+			packageProductDependencies = (
+			);
+			productName = ParcelPilotTests;
+			productReference = 0A0000000000000000000502 /* ParcelPilotTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		0A0000000000000000000403 /* ParcelPilotUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A0000000000000000001103 /* Build configuration list for PBXNativeTarget "ParcelPilotUITests" */;
+			buildPhases = (
+				0A0000000000000000001006 /* Sources */,
+				0A0000000000000000000803 /* Frameworks */,
+				0A0000000000000000001007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0A0000000000000000001202 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0A0000000000000000000703 /* ParcelPilotUITests */,
+			);
+			name = ParcelPilotUITests;
+			packageProductDependencies = (
+			);
+			productName = ParcelPilotUITests;
+			productReference = 0A0000000000000000000503 /* ParcelPilotUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0A0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					0A0000000000000000000401 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					0A0000000000000000000402 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 0A0000000000000000000401;
+					};
+					0A0000000000000000000403 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 0A0000000000000000000401;
+					};
+				};
+			};
+			buildConfigurationList = 0A0000000000000000001100 /* Build configuration list for PBXProject "ParcelPilot" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 0A0000000000000000000901;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0A0000000000000000001301 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				0A0000000000000000001302 /* XCRemoteSwiftPackageReference "ios-maps-sdk" */,
+				0A0000000000000000001304 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				0A0000000000000000001303 /* XCLocalSwiftPackageReference "Packages/ParcelPilotKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 0A0000000000000000000904 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0A0000000000000000000401 /* ParcelPilot */,
+				0A0000000000000000000402 /* ParcelPilotTests */,
+				0A0000000000000000000403 /* ParcelPilotUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		0A0000000000000000001002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0A0000000000000000001005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0A0000000000000000001007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0A0000000000000000001003 /* Upload Crashlytics dSYMs */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info.plist",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+			);
+			name = "Upload Crashlytics dSYMs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Uploads dSYMs for Release builds of a configured Firebase app only.\nif [ \"${CONFIGURATION}\" != \"Release\" ]; then echo \"Crashlytics: skipped (${CONFIGURATION})\"; exit 0; fi\nif [ ! -f \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info.plist\" ]; then echo \"Crashlytics: skipped (no GoogleService-Info.plist)\"; exit 0; fi\n\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0A0000000000000000001001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0A0000000000000000001004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0A0000000000000000001006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0A0000000000000000001201 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0A0000000000000000000401 /* ParcelPilot */;
+			targetProxy = 0A0000000000000000000301 /* PBXContainerItemProxy */;
+		};
+		0A0000000000000000001202 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0A0000000000000000000401 /* ParcelPilot */;
+			targetProxy = 0A0000000000000000000302 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0A0000000000000000001401 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0A0000000000000000000504 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		0A0000000000000000001402 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0A0000000000000000000504 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		0A0000000000000000001403 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "$(PP_ENTITLEMENTS_$(PP_APPLE_DEVELOPER_PROGRAM))";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(PP_DEVELOPMENT_TEAM)";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ParcelPilot/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ParcelPilot;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.navigation";
+				INFOPLIST_KEY_NSCameraUsageDescription = "ParcelPilot uses the camera to read delivery addresses from package labels and to take optional proof-of-delivery photos. Label images stay on your iPhone.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "ParcelPilot uses your location while the app is open to start a route or re-plan remaining stops from where you are.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PP_BUNDLE_ID)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		0A0000000000000000001404 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "$(PP_ENTITLEMENTS_$(PP_APPLE_DEVELOPER_PROGRAM))";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(PP_DEVELOPMENT_TEAM)";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ParcelPilot/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ParcelPilot;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.navigation";
+				INFOPLIST_KEY_NSCameraUsageDescription = "ParcelPilot uses the camera to read delivery addresses from package labels and to take optional proof-of-delivery photos. Label images stay on your iPhone.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "ParcelPilot uses your location while the app is open to start a route or re-plan remaining stops from where you are.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PP_BUNDLE_ID)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		0A0000000000000000001405 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(PP_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PP_BUNDLE_ID).tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ParcelPilot.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ParcelPilot";
+			};
+			name = Debug;
+		};
+		0A0000000000000000001406 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(PP_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PP_BUNDLE_ID).tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ParcelPilot.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ParcelPilot";
+			};
+			name = Release;
+		};
+		0A0000000000000000001407 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(PP_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PP_BUNDLE_ID).uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = ParcelPilot;
+			};
+			name = Debug;
+		};
+		0A0000000000000000001408 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(PP_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PP_BUNDLE_ID).uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = ParcelPilot;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0A0000000000000000001100 /* Build configuration list for PBXProject "ParcelPilot" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0A0000000000000000001401 /* Debug */,
+				0A0000000000000000001402 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0A0000000000000000001101 /* Build configuration list for PBXNativeTarget "ParcelPilot" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0A0000000000000000001403 /* Debug */,
+				0A0000000000000000001404 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0A0000000000000000001102 /* Build configuration list for PBXNativeTarget "ParcelPilotTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0A0000000000000000001405 /* Debug */,
+				0A0000000000000000001406 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0A0000000000000000001103 /* Build configuration list for PBXNativeTarget "ParcelPilotUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0A0000000000000000001407 /* Debug */,
+				0A0000000000000000001408 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		0A0000000000000000001303 /* XCLocalSwiftPackageReference "Packages/ParcelPilotKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/ParcelPilotKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0A0000000000000000001301 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 12.19.2;
+			};
+		};
+		0A0000000000000000001302 /* XCRemoteSwiftPackageReference "ios-maps-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/googlemaps/ios-maps-sdk";
+			requirement = {
+				kind = exactVersion;
+				version = 11.2.0;
+			};
+		};
+		0A0000000000000000001304 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 10.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0A0000000000000000000201 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001301 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		0A0000000000000000000202 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001301 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		0A0000000000000000000203 /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001301 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
+		};
+		0A0000000000000000000204 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001301 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
+		};
+		0A0000000000000000000205 /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001301 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
+		};
+		0A0000000000000000000206 /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001301 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
+		};
+		0A0000000000000000000207 /* GoogleMaps */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001302 /* XCRemoteSwiftPackageReference "ios-maps-sdk" */;
+			productName = GoogleMaps;
+		};
+		0A0000000000000000000208 /* ParcelPilotKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001303 /* XCLocalSwiftPackageReference "Packages/ParcelPilotKit" */;
+			productName = ParcelPilotKit;
+		};
+		0A0000000000000000000209 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001304 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		0A000000000000000000020A /* GoogleSignInSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000001304 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignInSwift;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 0A0000000000000000000001 /* Project object */;
+}

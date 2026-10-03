@@ -1,0 +1,24 @@
+// Shared build settings. Values here are safe to commit.
+// Rename the app or change identifiers here (see README "Renaming").
+
+PP_APP_DISPLAY_NAME = ParcelPilot
+PP_BUNDLE_ID = com.example.parcelpilot
+PP_DEVELOPMENT_TEAM =
+
+// Apple Developer Program (paid) features: Sign in with Apple and App Attest. A free personal team
+// can't sign these, so they're off by default. With a paid membership, set this to YES in
+// Config/Secrets.xcconfig and enable both capabilities on the App ID.
+PP_APPLE_DEVELOPER_PROGRAM = NO
+PP_ENTITLEMENTS_NO = ParcelPilot/ParcelPilot.entitlements
+PP_ENTITLEMENTS_YES = ParcelPilot/AppleServices.entitlements
+
+// Public client configuration (NOT a secret): the Maps SDK for iOS key must be restricted to this
+// bundle ID and to the Maps SDK for iOS API in Google Cloud. Set it in Config/Secrets.xcconfig.
+GOOGLE_MAPS_IOS_API_KEY =
+
+// Google sign-in: the REVERSED_CLIENT_ID value from GoogleService-Info.plist (registered as the app's
+// URL scheme so Google can hand the sign-in back to the app). Set it in Config/Secrets.xcconfig.
+GOOGLE_REVERSED_CLIENT_ID =
+
+// Optional local overrides (git-ignored). Copy Secrets.example.xcconfig → Secrets.xcconfig.
+#include? "Secrets.xcconfig"
