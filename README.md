@@ -45,12 +45,16 @@ Config/                       Base.xcconfig (+ your git-ignored Secrets.xcconfig
 
 ## Run locally
 
-### 1. Demo mode — no accounts, no network, no billing
-Open `ParcelPilot.xcodeproj`, run the **ParcelPilot** scheme on an iPhone Simulator, tap
-**Try demo mode** (or **Load sample demo route**). Everything stays on the device; locations are
-synthetic and labelled as such; route order uses a clearly labelled straight-line estimate.
+### 1. Run the app
+Open `ParcelPilot.xcodeproj` and run the **ParcelPilot** scheme on an iPhone Simulator.
+Sign in with Google or email. No build offers a demo-mode button.
 
-Command line equivalent:
+For automated UI tests and screenshots, the explicit `-PPDemoMode YES` launch argument still
+provides a local fixture session. Everything stays on the device; locations are synthetic and
+labelled as such; route order uses a clearly labelled straight-line estimate. Previously selected
+demo sessions no longer resume on a normal launch; their local data is retained.
+
+Command line fixture session (replace `com.example.parcelpilot` with your configured bundle identifier):
 ```bash
 xcodebuild -project ParcelPilot.xcodeproj -scheme ParcelPilot -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath build/DerivedData.noindex build CODE_SIGNING_ALLOWED=NO
 ```

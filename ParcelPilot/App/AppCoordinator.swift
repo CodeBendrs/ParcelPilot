@@ -8,7 +8,7 @@ import Observation
 final class AppCoordinator {
     enum Phase {
         case launching
-        /// No usable Firebase configuration in this build (demo mode is still available).
+        /// No usable Firebase configuration in this build.
         case welcome(unconfigured: Bool)
         case signIn
         case ready(AppServices)
@@ -17,15 +17,15 @@ final class AppCoordinator {
     private(set) var phase: Phase = .launching
     let config: AppConfiguration
     private(set) var session: FirebaseSession?
-    private let defaults: UserDefaults
     private static let demoKey = "pp.demoSelected"
     private var observation: Task<Void, Never>?
 
     init(config: AppConfiguration = .load(), defaults: UserDefaults = .standard) {
         self.config = config
-        self.defaults = defaults
+        // Retire the old user-selected demo session without deleting its local data.
+        defaults.removeObject(forKey: Self.demoKey)
         FirebaseBootstrap.configureIfPossible(config)
-        if config.forceDemo || defaults.bool(forKey: Self.demoKey) {
+        if config.forceDemo {
             phase = .ready(.demo(config: config))
         } else if FirebaseBootstrap.isConfigured {
             // UI-test hook, emulator builds only: start at the sign-in screen.
@@ -47,13 +47,7 @@ final class AppCoordinator {
 
     var canUseAccounts: Bool { FirebaseBootstrap.isConfigured }
 
-    func startDemo() {
-        defaults.set(true, forKey: Self.demoKey)
-        phase = .ready(.demo(config: config))
-    }
-
     func exitDemo() {
-        defaults.set(false, forKey: Self.demoKey)
         if FirebaseBootstrap.isConfigured {
             if session == nil { session = FirebaseSession(); observeSession() }
             apply(session?.state ?? .signedOut)
@@ -78,7 +72,7 @@ final class AppCoordinator {
     }
 
     private func apply(_ state: FirebaseSession.State) {
-        if defaults.bool(forKey: Self.demoKey) || config.forceDemo { return }
+        if config.forceDemo { return }
         switch state {
         case .loading: phase = .launching
         case .signedOut: phase = .signIn

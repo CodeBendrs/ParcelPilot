@@ -23,10 +23,8 @@ struct RootView: View {
     }
 }
 
-/// Shown when this build has no Firebase configuration. Demo mode still works; the message says
-/// exactly what to add to enable accounts.
+/// Shown when this build has no Firebase configuration, so accounts cannot be used yet.
 struct WelcomeView: View {
-    @Environment(AppCoordinator.self) private var coordinator
     var unconfigured: Bool
 
     var body: some View {
@@ -36,14 +34,6 @@ struct WelcomeView: View {
                 if unconfigured {
                     Banner(symbol: "gearshape.2", text: "Accounts aren't set up in this build. Add GoogleService-Info.plist to the ParcelPilot folder (README → Firebase setup) to enable Sign in with Apple and cloud sync.", tone: .warning)
                 }
-                Button {
-                    coordinator.startDemo()
-                } label: {
-                    Label("Try demo mode", systemImage: "theatermasks")
-                }
-                .buttonStyle(PrimaryActionButtonStyle())
-                .accessibilityIdentifier("startDemo")
-                DemoExplainer()
             }
             .padding(Theme.Space.xl)
             .frame(maxWidth: 560)
@@ -67,20 +57,6 @@ struct BrandHeader: View {
                 .multilineTextAlignment(.center)
         }
         .padding(.top, Theme.Space.xxl)
-    }
-}
-
-struct DemoExplainer: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Label("Demo mode keeps everything on this iPhone — no account needed.", systemImage: "iphone")
-            Label("Locations are synthetic and never treated as verified addresses.", systemImage: "theatermasks")
-            Label("Route order uses a straight-line estimate, not real road travel times.", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-        }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
     }
 }
 
@@ -133,14 +109,6 @@ struct SignInView: View {
                         .accessibilityIdentifier("emulatorSignIn")
                         Text("Local Firebase Emulator Suite — test data only.").font(.caption).foregroundStyle(.secondary)
                     }
-
-                    Button {
-                        coordinator.startDemo()
-                    } label: {
-                        Label("Try demo mode instead", systemImage: "theatermasks")
-                    }
-                    .buttonStyle(PrimaryActionButtonStyle(filled: false))
-                    .accessibilityIdentifier("startDemo")
                 }
                 if working { ProgressView("Signing in…") }
                 if let notice = coordinator.session?.signedOutNotice {
