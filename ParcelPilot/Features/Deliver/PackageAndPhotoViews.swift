@@ -51,7 +51,7 @@ struct PackageFinderView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
-                    if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
+                    if ScannerController.isSupported && ScannerController.isAvailable {
                         Button { scanning = true } label: { Label("Scan barcode", systemImage: "barcode.viewfinder") }
                     }
                 }
@@ -144,19 +144,21 @@ struct PODCaptureView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: Theme.Space.l) {
-                Image(systemName: "camera.on.rectangle").font(.system(size: 44)).foregroundStyle(Theme.brand)
-                Text("Proof-of-delivery photo").font(.title3.weight(.semibold))
-                Text(services.mode.isDemo ? "Demo mode: the photo stays on this iPhone." : "Saved on this iPhone first, then uploaded securely to your account — even if you're offline now.")
-                    .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                if CameraCaptureView.isAvailable {
-                    Button { showCamera = true } label: { Label("Take photo", systemImage: "camera") }.buttonStyle(PrimaryActionButtonStyle())
+            FitOrScroll {
+                VStack(spacing: Theme.Space.l) {
+                    Image(systemName: "camera.on.rectangle").font(.system(size: 44)).foregroundStyle(Theme.brand)
+                    Text("Proof-of-delivery photo").font(.title3.weight(.semibold))
+                    Text(services.mode.isDemo ? "Demo mode: the photo stays on this iPhone." : "Saved on this iPhone first, then uploaded securely to your account — even if you're offline now.")
+                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    if CameraCaptureView.isAvailable {
+                        Button { showCamera = true } label: { Label("Take photo", systemImage: "camera") }.buttonStyle(PrimaryActionButtonStyle())
+                    }
+                    PhotosPicker(selection: $item, matching: .images) { Label("Choose from library", systemImage: "photo") }
+                        .buttonStyle(PrimaryActionButtonStyle(filled: !CameraCaptureView.isAvailable))
+                    if let error { Banner(symbol: "exclamationmark.triangle", text: error, tone: .danger) }
                 }
-                PhotosPicker(selection: $item, matching: .images) { Label("Choose from library", systemImage: "photo") }
-                    .buttonStyle(PrimaryActionButtonStyle(filled: !CameraCaptureView.isAvailable))
-                if let error { Banner(symbol: "exclamationmark.triangle", text: error, tone: .danger) }
+                .padding(Theme.Space.xl)
             }
-            .padding(Theme.Space.xl)
             .navigationTitle("Add photo")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Skip") { dismiss() } } }
@@ -193,8 +195,8 @@ struct PhotosSection: View {
     let snapshot: RouteSnapshot
     let stop: Stop
     var add: () -> Void
+    var view: (DeliveryPhoto) -> Void
     @Environment(AppServices.self) private var services
-    @State private var viewing: DeliveryPhoto?
 
     var body: some View {
         let photos = snapshot.photos.filter { $0.stopID == stop.id }
@@ -213,14 +215,13 @@ struct PhotosSection: View {
                 .swipeActions { Button("Delete", role: .destructive) { services.photos.deletePending(p.id) } }
             }
             ForEach(photos) { photo in
-                Button { viewing = photo } label: {
+                Button { view(photo) } label: {
                     Label("Photo · \(DisplayFormat.time(photo.capturedAt, timeZone: snapshot.route.timeZone))", systemImage: "photo")
                 }
                 .swipeActions { Button("Delete", role: .destructive) { Task { try? await services.photos.delete(photo: photo, routeID: snapshot.route.id) } } }
             }
             Button(action: add) { Label("Add photo", systemImage: "camera") }
         }
-        .sheet(item: $viewing) { photo in PhotoViewer(photo: photo, routeID: snapshot.route.id) }
     }
 }
 
@@ -231,11 +232,13 @@ struct PhotoViewer: View {
     @Environment(\.dismiss) private var dismiss
     @State private var image: UIImage?
     @State private var error: String?
+    @State private var deleteError: String?
+    @State private var deleting = false
 
     var body: some View {
         NavigationStack {
             Group {
-                if let image { Image(uiImage: image).resizable().scaledToFit() }
+                if let image { Image(uiImage: image).resizable().scaledToFit().accessibilityIdentifier("deliveryPhoto") }
                 else if let error { Text(error).padding() }
                 else { ProgressView("Loading photo…") }
             }
@@ -244,12 +247,25 @@ struct PhotoViewer: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
                 ToolbarItem(placement: .destructiveAction) {
-                    Button("Delete", role: .destructive) { Task { try? await services.photos.delete(photo: photo, routeID: routeID); dismiss() } }
+                    Button("Delete", role: .destructive) {
+                        Task {
+                            deleting = true
+                            defer { deleting = false }
+                            do {
+                                try await services.photos.delete(photo: photo, routeID: routeID)
+                                dismiss()
+                            } catch { deleteError = error.localizedDescription }
+                        }
+                    }
+                    .disabled(deleting)
                 }
             }
             .task {
                 do { image = try await services.photos.image(for: photo, routeID: routeID) } catch { self.error = error.localizedDescription }
             }
+            .alert("Couldn't delete photo", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(deleteError ?? "") }
         }
     }
 }

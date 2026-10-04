@@ -10,9 +10,11 @@ struct StopDetailView: View {
     @State private var editingPackage: Package?
     @State private var pinning = false
     @State private var photoTarget = false
+    @State private var viewingPhoto: DeliveryPhoto?
     @State private var confirmDelete = false
     @State private var navError: String?
     @State private var choosingNavApp = false
+    @State private var removedPackage: Package?
 
     var body: some View {
         NavigationStack {
@@ -70,7 +72,18 @@ struct StopDetailView: View {
                         }
                         .frame(minHeight: Theme.minTouch)
                     }
-                    .swipeActions { Button("Remove", role: .destructive) { services.store.delete(package: p, in: snapshot) } }
+                    .accessibilityIdentifier("packageRow.\(p.id)")
+                    .swipeActions { Button("Remove", role: .destructive) {
+                        services.store.delete(package: p, in: snapshot)
+                        removedPackage = p
+                    } }
+                }
+                if let removedPackage {
+                    Button("Undo remove package", systemImage: "arrow.uturn.backward") {
+                        services.store.restore(package: removedPackage, in: route.id)
+                        self.removedPackage = nil
+                    }
+                    .frame(minHeight: Theme.minTouch)
                 }
                 Button { addPackage(snapshot, stop) } label: { Label("Add another package", systemImage: "plus") }
             }
@@ -116,7 +129,7 @@ struct StopDetailView: View {
                 }
             }
 
-            PhotosSection(snapshot: snapshot, stop: stop) { photoTarget = true }
+            PhotosSection(snapshot: snapshot, stop: stop, add: { photoTarget = true }, view: { viewingPhoto = $0 })
 
             Section {
                 Button("Remove stop and its packages", role: .destructive) { confirmDelete = true }
@@ -140,6 +153,7 @@ struct StopDetailView: View {
         .sheet(isPresented: $photoTarget) {
             PODCaptureView(routeID: route.id, stopID: stop.id, packageIDs: packages.map(\.id))
         }
+        .sheet(item: $viewingPhoto) { photo in PhotoViewer(photo: photo, routeID: route.id) }
         .confirmationDialog("Remove this stop?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Remove stop", role: .destructive) {
                 services.store.delete(stop: stop, from: snapshot)

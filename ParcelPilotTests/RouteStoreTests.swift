@@ -140,6 +140,13 @@ struct RouteStoreTests {
         #expect(env.snapshot.stops.count == 1)
         #expect(env.snapshot.packages.count == 2)
         #expect(env.snapshot.ledger.status(of: added.packageIDs[0]).isHandled)
+        let package = packages[0]
+        env.store.delete(package: package, in: env.snapshot)
+        env.store.rename(env.snapshot.route, to: "Edited after package removal")
+        env.store.restore(package: package, in: env.snapshot.route.id)
+        #expect(env.snapshot.packages.count == 2)
+        #expect(env.snapshot.route.name == "Edited after package removal")
+        #expect(env.snapshot.ledger.status(of: added.packageIDs[0]).isHandled)
     }
 
     @Test("Archive and resume")

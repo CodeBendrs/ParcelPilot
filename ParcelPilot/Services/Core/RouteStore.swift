@@ -265,6 +265,13 @@ final class RouteStore {
         backend.commit(ChangeSet([.deletePackage(snapshot.route.id, package.id), .updateRoute(touched(snapshot.route), bumpRevision: true)], label: "Remove package"))
     }
 
+    func restore(package: Package, in routeID: RouteID) {
+        guard let snapshot = current, snapshot.route.id == routeID,
+              snapshot.stops.contains(where: { $0.id == package.stopID }),
+              !snapshot.packages.contains(where: { $0.id == package.id }) else { return }
+        backend.commit(ChangeSet([.putPackage(routeID, package), .updateRoute(touched(snapshot.route), bumpRevision: true)], label: "Undo remove package"))
+    }
+
     /// Manual reorder. Changes the order only — not an optimization input — so the revision is
     /// unchanged, but the applied plan's times no longer describe the order.
     func reorder(_ orderedIDs: [StopID], in snapshot: RouteSnapshot) {
