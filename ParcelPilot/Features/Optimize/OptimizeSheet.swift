@@ -32,6 +32,23 @@ struct OptimizeSheet: View {
                     optionsSections
                 }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let job, [.succeeded, .infeasible].contains(job.status), let proposal = job.proposal {
+                    let verdict = ProposalValidator.validate(proposal, against: live, now: Date(), demoMode: services.verifier.allowsSynthetic)
+                    VStack(spacing: Theme.Space.xs) {
+                        Button { apply(proposal) } label: { Label("Use this order", systemImage: "checkmark") }
+                            .buttonStyle(PrimaryActionButtonStyle())
+                            .disabled(verdict != .valid)
+                            .accessibilityIdentifier("applyPlan")
+                        Button("Keep my current order") { dismiss() }
+                            .frame(maxWidth: .infinity, minHeight: Theme.minTouch)
+                            .accessibilityIdentifier("keepCurrentOrder")
+                    }
+                    .padding(.horizontal, Theme.Space.l)
+                    .padding(.vertical, Theme.Space.s)
+                    .background(Theme.elevated)
+                }
+            }
             .navigationTitle(isDelivering ? "Re-plan remaining" : "Optimize route")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -128,7 +145,7 @@ struct OptimizeSheet: View {
             }
         case .succeeded, .infeasible:
             if let proposal = job.proposal {
-                ProposalPreview(proposal: proposal, snapshot: live, apply: { apply(proposal) }, recalculate: { reset() }, keepCurrent: { dismiss() })
+                ProposalPreview(proposal: proposal, snapshot: live, recalculate: { reset() })
             } else {
                 Section { ProgressView("Loading result…") }
             }
@@ -198,9 +215,7 @@ struct OptimizeSheet: View {
 struct ProposalPreview: View {
     let proposal: OptimizationProposal
     let snapshot: RouteSnapshot
-    var apply: () -> Void
     var recalculate: () -> Void
-    var keepCurrent: () -> Void
     @Environment(AppServices.self) private var services
 
     var body: some View {
@@ -216,10 +231,17 @@ struct ProposalPreview: View {
                 Banner(symbol: "xmark.octagon", text: "This result can't be used: \(reason)", tone: .danger, actionTitle: "Recalculate", action: recalculate)
             }
             if let m = proposal.metrics {
-                HStack(spacing: Theme.Space.l) {
-                    Metric(title: "Duration", value: DisplayFormat.duration(seconds: m.totalSeconds))
-                    Metric(title: "Distance", value: DisplayFormat.distance(meters: m.travelMeters, unit: unit))
-                    Metric(title: "Finish", value: DisplayFormat.time(m.routeEnd, timeZone: tz))
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Theme.Space.l) {
+                        Metric(title: "Duration", value: DisplayFormat.duration(seconds: m.totalSeconds))
+                        Metric(title: "Distance", value: DisplayFormat.distance(meters: m.travelMeters, unit: unit))
+                        Metric(title: "Finish", value: DisplayFormat.time(m.routeEnd, timeZone: tz))
+                    }.fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: Theme.Space.s) {
+                        Metric(title: "Duration", value: DisplayFormat.duration(seconds: m.totalSeconds))
+                        Metric(title: "Distance", value: DisplayFormat.distance(meters: m.travelMeters, unit: unit))
+                        Metric(title: "Finish", value: DisplayFormat.time(m.routeEnd, timeZone: tz))
+                    }
                 }
                 let parts = ["\(DisplayFormat.duration(seconds: m.serviceSeconds)) at stops"]
                     + (m.waitSeconds >= 60 ? ["\(DisplayFormat.duration(seconds: m.waitSeconds)) waiting for delivery windows"] : [])
@@ -272,16 +294,7 @@ struct ProposalPreview: View {
             }
         }
 
-        Section {
-            Button(action: apply) { Label("Use this order", systemImage: "checkmark") }
-                .buttonStyle(PrimaryActionButtonStyle())
-                .disabled(verdict != .valid)
-                .accessibilityIdentifier("applyPlan")
-            Button("Keep my current order", action: keepCurrent)
-                .accessibilityIdentifier("keepCurrentOrder")
-                .frame(maxWidth: .infinity, minHeight: Theme.minTouch)
-        }
-        .listRowBackground(Color.clear)
+
     }
 
     private func stopName(_ id: StopID) -> String {

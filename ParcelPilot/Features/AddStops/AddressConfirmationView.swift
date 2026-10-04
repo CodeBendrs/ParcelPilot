@@ -28,6 +28,13 @@ struct AddressConfirmationView: View {
                 packageSection
                 actionsSection
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                addAction
+                    .padding(.horizontal, Theme.Space.l)
+                    .padding(.vertical, Theme.Space.s)
+                    .background(Theme.elevated)
+            }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle(candidate.source == .scan ? "Confirm label" : "Confirm address")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -173,9 +180,12 @@ struct AddressConfirmationView: View {
     }
 
     private func field(_ title: String, _ keyPath: WritableKeyPath<PostalAddress, String?>) -> some View {
-        TextField(title, text: Binding(get: { candidate.address[keyPath: keyPath] ?? "" }, set: { candidate.address[keyPath: keyPath] = $0.isEmpty ? nil : $0; edited() }))
-            .autocorrectionDisabled()
-            .frame(minHeight: Theme.minTouch)
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            TextField(title, text: Binding(get: { candidate.address[keyPath: keyPath] ?? "" }, set: { candidate.address[keyPath: keyPath] = $0.isEmpty ? nil : $0; edited() }))
+                .autocorrectionDisabled()
+                .frame(minHeight: Theme.minTouch)
+        }
     }
 
     private func edited() {
@@ -242,14 +252,6 @@ struct AddressConfirmationView: View {
         Section {
             let decision = candidate.decision(allowSynthetic: services.verifier.allowsSynthetic)
             let (status, _, _) = candidate.confirmedStop(verifier: services.verifier)
-            Button {
-                add()
-            } label: {
-                Label(decision.autoAcceptable ? "Add to route" : "Add to route anyway", systemImage: "plus.circle.fill")
-            }
-            .buttonStyle(PrimaryActionButtonStyle())
-            .disabled(candidate.address.streetName == nil && candidate.address.deliveryInstallation == nil)
-            .accessibilityIdentifier("addToRoute")
             if !decision.autoAcceptable {
                 Text("Will be added as “\(status.label)”." + (status == .verified || status == .driverConfirmed || status == .demoSynthetic ? "" : " It stays on the route but isn't optimized until the address is fixed."))
                     .font(.caption).foregroundStyle(.secondary)
@@ -272,12 +274,24 @@ struct AddressConfirmationView: View {
         .listRowBackground(Color.clear)
     }
 
+    private var addAction: some View {
+        let (status, _, _) = candidate.confirmedStop(verifier: services.verifier)
+        let title = status == .needsReview || status == .unresolvable ? "Add with address warning" : "Add to route"
+        return Button(action: add) { Label(title, systemImage: "plus.circle.fill") }
+            .buttonStyle(PrimaryActionButtonStyle())
+            .disabled(verifying || (candidate.address.streetName == nil && candidate.address.deliveryInstallation == nil))
+            .accessibilityIdentifier("addToRoute")
+    }
+
     // MARK: Actions
 
     private func verify() async {
         verifying = true
         defer { verifying = false }
-        candidate.verification = await services.verifier.verify(candidate.address)
+        let address = candidate.address
+        let result = await services.verifier.verify(address)
+        guard candidate.address == address else { return }
+        candidate.verification = result
     }
 
     private func add() {
@@ -339,7 +353,7 @@ struct StorageLocationPicker: View {
                         Button(q) { location = q; Haptics.selection() }
                             .font(.subheadline)
                             .padding(.horizontal, 12)
-                            .frame(minHeight: 36)
+                            .frame(minHeight: Theme.minTouch)
                             .background(location == q ? Theme.teal.opacity(0.25) : Theme.brandSoft, in: Capsule())
                             .buttonStyle(.plain)
                             .accessibilityAddTraits(location == q ? .isSelected : [])

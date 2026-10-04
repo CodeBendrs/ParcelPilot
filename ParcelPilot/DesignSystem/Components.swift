@@ -11,7 +11,7 @@ struct StatusBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: symbol).imageScale(.small).accessibilityHidden(true)
-            Text(text).lineLimit(compact ? 1 : 2).fixedSize(horizontal: compact, vertical: false)
+            Text(text).fixedSize(horizontal: false, vertical: true)
         }
         .font(compact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
         .foregroundStyle(tone.color)
@@ -146,7 +146,7 @@ struct UnitBadge: View {
             .padding(.vertical, 4)
             .foregroundStyle(Theme.teal)
             .background(Theme.teal.opacity(0.14), in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
-            .fixedSize()
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(Text(label.replacingOccurrences(of: "#", with: "Unit ")))
     }
 }
