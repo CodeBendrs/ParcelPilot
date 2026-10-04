@@ -42,12 +42,12 @@ struct RouteWorkspaceView: View {
     /// accessibility text sizes need room more than map area.
     private var mediumFraction: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 0.72 }
-        return effectiveMode == .deliver ? 0.64 : 0.55
+        return 0.70
     }
 
     var body: some View {
         let planState = tracker?.state(for: snapshot) ?? .none
-        MapSheetLayout(detent: $detent, mediumFraction: mediumFraction) { inset in
+        MapSheetLayout(detent: $detent, mediumFraction: mediumFraction, allowsCollapse: effectiveMode == .plan) { inset in
             RouteMapView(snapshot: snapshot, planState: planState, selectedStopID: $selectedStopID, bottomInset: inset)
                 .ignoresSafeArea(edges: .bottom)
         } sheet: {
@@ -85,7 +85,14 @@ struct RouteWorkspaceView: View {
         .onAppear {
             if tracker == nil { tracker = PlanTracker(optimizer: services.optimizer) }
             tracker?.track(snapshot.route)
+            if dynamicTypeSize.isAccessibilitySize { detent = .expanded }
             Task { await services.verifier.verifyPendingStops(in: snapshot, store: services.store) }
+        }
+        .onChange(of: effectiveMode) { _, newMode in
+            if newMode == .deliver && detent == .collapsed { detent = .medium }
+        }
+        .onChange(of: dynamicTypeSize) { _, size in
+            if size.isAccessibilitySize { detent = .expanded }
         }
         .onChange(of: snapshot.route.appliedRequestID) { _, _ in tracker?.track(snapshot.route) }
         .onChange(of: selectedStopID) { _, id in if id != nil, detent == .collapsed { detent = .medium } }
@@ -127,7 +134,7 @@ struct RouteWorkspaceView: View {
 
     @ViewBuilder private func sheetContent(_ item: WorkspaceSheet) -> some View {
         switch item {
-        case .addStops: AddStopsMenu(snapshot: snapshot, sheet: $sheet, selectTab: selectTab).presentationDetents([.medium])
+        case .addStops: AddStopsMenu(snapshot: snapshot, sheet: $sheet, selectTab: selectTab).presentationDetents([.medium, .large])
         case .optimize: OptimizeSheet(snapshot: snapshot, defaultOrigin: effectiveMode == .deliver ? .currentLocation : .routeStart)
         case let .stop(id): StopDetailView(stopID: id)
         case .settings: RouteEditorView(route: snapshot.route)
@@ -149,6 +156,7 @@ struct PlanPanel: View {
     @Binding var sheet: WorkspaceSheet?
     var selectTab: (AppTab) -> Void
     @Environment(AppServices.self) private var services
+    @Environment(ToastCenter.self) private var toasts
     @State private var editMode: EditMode = .inactive
 
     @ViewBuilder private var addButtons: some View {
@@ -186,6 +194,7 @@ struct PlanPanel: View {
                     PlanWarnings(snapshot: snapshot, sheet: $sheet)
                 }
                 .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 Section {
                     // One row when it fits; otherwise wrap rather than truncate button titles.
                     ViewThatFits(in: .horizontal) {
@@ -205,6 +214,7 @@ struct PlanPanel: View {
                     }
                 }
                 .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
 
                 if ordered.isEmpty {
                     Section {
@@ -226,10 +236,18 @@ struct PlanPanel: View {
                             .listRowBackground(selectedStopID == stop.id ? Theme.brandSoft : nil)
                             .accessibilityIdentifier("stopRow.\(index + 1)")
                             .swipeActions(edge: .trailing) {
-                                Button("Remove", role: .destructive) { services.store.delete(stop: stop, from: snapshot) }
+                                Button("Remove", role: .destructive) {
+                                    services.store.delete(stop: stop, from: snapshot)
+                                    toasts.show("Stop removed", symbol: "trash", tone: .neutral, undo: {
+                                        services.store.restore(stop: stop, packages: snapshot.packages(for: stop.id), in: snapshot.route.id)
+                                    })
+                                }
                             }
                             .swipeActions(edge: .leading) {
-                                Button("Deliver next") { services.store.setNextStop(stop.id, in: snapshot.route) }.tint(Theme.teal)
+                                Button("Deliver next") {
+                                    services.store.setNextStop(stop.id, in: snapshot.route)
+                                    toasts.show("Set as next stop", symbol: "arrow.right.circle", tone: .info)
+                                }.tint(Theme.teal)
                             }
                         }
                         .onMove { from, to in
@@ -310,7 +328,7 @@ struct FlowRow: Layout {
         let width = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = view.sizeThatFits(ProposedViewSize(width: width.isFinite ? width : nil, height: nil))
             if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
             x += size.width + spacing
             maxX = max(maxX, x)
@@ -322,7 +340,7 @@ struct FlowRow: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = view.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
             if x > bounds.minX, x + size.width > bounds.maxX { x = bounds.minX; y += rowHeight + spacing; rowHeight = 0 }
             view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
             x += size.width + spacing
@@ -342,27 +360,34 @@ struct PlanSummaryCard: View {
 
     var body: some View {
         // At accessibility text sizes the Optimize button goes below the status so neither wraps mid-word.
-        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Theme.Space.m)) : AnyLayout(HStackLayout(alignment: .center, spacing: Theme.Space.m))
+        let layout = dynamicTypeSize.isAccessibilitySize || planStateIsCurrent ? AnyLayout(VStackLayout(alignment: .leading, spacing: Theme.Space.m)) : AnyLayout(HStackLayout(alignment: .center, spacing: Theme.Space.m))
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             layout {
                 VStack(alignment: .leading, spacing: 2) {
                     switch planState {
                     case let .current(p):
                         if let m = p.metrics {
-                            HStack(spacing: Theme.Space.l) {
+                            ViewThatFits(in: .horizontal) {
+                              HStack(spacing: Theme.Space.l) {
                                 Metric(title: "Duration", value: DisplayFormat.duration(seconds: m.totalSeconds))
                                 Metric(title: "Distance", value: DisplayFormat.distance(meters: m.travelMeters, unit: services.settings.settings.distanceUnit))
                                 Metric(title: "Finish", value: DisplayFormat.time(m.routeEnd, timeZone: snapshot.route.timeZone))
+                              }
+                              VStack(alignment: .leading, spacing: Theme.Space.s) {
+                                Metric(title: "Duration", value: DisplayFormat.duration(seconds: m.totalSeconds))
+                                Metric(title: "Distance", value: DisplayFormat.distance(meters: m.travelMeters, unit: services.settings.settings.distanceUnit))
+                                Metric(title: "Finish", value: DisplayFormat.time(m.routeEnd, timeZone: snapshot.route.timeZone))
+                              }
                             }
                         }
                     case .outdated:
                         Label("Times outdated", systemImage: "clock.badge.exclamationmark").font(.headline).foregroundStyle(Theme.warning)
                     case .none:
                         Label("Not optimized", systemImage: "point.topleft.down.to.point.bottomright.curvepath").font(.headline)
-                        Text("Stops are in the order you arranged them.").font(.caption).foregroundStyle(.secondary)
+                        Text("Your stop order.").font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                if !dynamicTypeSize.isAccessibilitySize && !planStateIsCurrent { Spacer(minLength: 0) }
                 Button(action: optimize) {
                     Label(planStateIsCurrent ? "Re-optimize" : "Optimize", systemImage: "wand.and.stars")
                         .font(.subheadline.weight(.semibold))
@@ -378,7 +403,9 @@ struct PlanSummaryCard: View {
             }
             switch planState {
             case let .current(p):
-                ProvenanceText(text: "\(p.provider.displayName). \(p.trafficLabel). Calculated \(DisplayFormat.dateTime(p.calculatedAt, timeZone: snapshot.route.timeZone)).")
+                ProvenanceText(text: p.provider == .demo
+                    ? "Demo estimate · not road travel times. Calculated \(DisplayFormat.dateTime(p.calculatedAt, timeZone: snapshot.route.timeZone))."
+                    : "\(p.provider.displayName). \(p.trafficLabel). Calculated \(DisplayFormat.dateTime(p.calculatedAt, timeZone: snapshot.route.timeZone)).")
                 if !p.unassigned.isEmpty {
                     Banner(symbol: "exclamationmark.triangle.fill", text: "\(p.unassigned.count) stop\(p.unassigned.count == 1 ? "" : "s") couldn't be scheduled. Optimize again to see why.", tone: .danger)
                 }
@@ -424,7 +451,7 @@ struct PlanWarnings: View {
                     .accessibilityIdentifier("reviewQueueBanner")
             }
             if !needsReview.isEmpty {
-                Banner(symbol: "exclamationmark.triangle", text: needsReview.count == 1 ? "1 stop needs address review and won't be optimized until it's fixed." : "\(needsReview.count) stops need address review and won't be optimized until they're fixed.", tone: .warning, actionTitle: "Review") { sheet = .stop(needsReview[0].id) }
+                Banner(symbol: "exclamationmark.triangle", text: needsReview.count == 1 ? "1 address needs review." : "\(needsReview.count) addresses need review.", tone: .warning, actionTitle: "Review") { sheet = .stop(needsReview[0].id) }
             }
             if !pending.isEmpty {
                 Banner(symbol: "icloud.slash", text: pending.count == 1 ? "1 stop needs address verification. It will be checked when you're online and isn't included in optimization yet." : "\(pending.count) stops need address verification. They'll be checked when you're online and aren't included in optimization yet.", tone: .warning)

@@ -12,6 +12,7 @@ struct StopDetailView: View {
     @State private var photoTarget = false
     @State private var confirmDelete = false
     @State private var navError: String?
+    @State private var choosingNavApp = false
 
     var body: some View {
         NavigationStack {
@@ -48,9 +49,11 @@ struct StopDetailView: View {
                     LabeledContent("Location", value: locationText(r, now: Date()))
                 }
                 Button { editingAddress = CandidateBox(candidate: IntakeCandidate(routeID: route.id, source: .manual, address: stop.address, driverEdited: true)) } label: { Label("Edit or re-check address", systemImage: "pencil") }
+                    .accessibilityIdentifier("editStopAddress")
                 Button { pinning = true } label: { Label(stop.resolution?.match == .driverPin ? "Move pin" : "Place pin on map", systemImage: "mappin.and.ellipse") }
+                    .accessibilityIdentifier("placeStopPin")
                 Button { navigate(stop, route) } label: { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond") }
-                    .disabled(stop.address.civicNumber == nil)
+                    .disabled(!NavigationLauncher.canNavigate(to: stop))
                 Button { services.store.setNextStop(stop.id, in: route); toasts.show("Set as next stop", symbol: "arrow.right.circle", tone: .info) } label: { Label("Deliver this stop next", systemImage: "arrow.right.circle") }
             }
 
@@ -89,7 +92,13 @@ struct StopDetailView: View {
             }
 
             Section("Notes") {
-                NotesEditor(text: stop.notes) { text in var s = stop; s.notes = String(text.prefix(2000)); services.store.update(stop: s, in: route, invalidatesPlan: false) }
+                NotesEditor(text: stop.notes) { text in
+                    let notes = String(text.prefix(2000))
+                    guard notes != stop.notes else { return }
+                    var s = stop
+                    s.notes = notes
+                    services.store.update(stop: s, in: route, invalidatesPlan: false)
+                }
             }
 
             let outcomes = snapshot.outcomes.filter { $0.stopID == stop.id }.sorted { $0.recordedAt > $1.recordedAt }
@@ -140,6 +149,11 @@ struct StopDetailView: View {
                 dismiss()
             }
         } message: { Text("Its \(packages.count) package(s) are removed from the route. Recorded outcomes stay in history.") }
+        .confirmationDialog("Navigate with", isPresented: $choosingNavApp, titleVisibility: .visible) {
+            Button("Apple Maps") { launch(stop, route, using: .appleMaps) }
+            Button("Google Maps") { launch(stop, route, using: .googleMaps) }
+            Button("Cancel", role: .cancel) {}
+        }
         .alert("Couldn't open navigation", isPresented: Binding(get: { navError != nil }, set: { if !$0 { navError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(navError ?? "") }
@@ -162,9 +176,15 @@ struct StopDetailView: View {
     }
 
     private func navigate(_ stop: Stop, _ route: Route) {
+        let app = services.settings.settings.navigationApp
+        if app == .ask { choosingNavApp = true }
+        else { launch(stop, route, using: app) }
+    }
+
+    private func launch(_ stop: Stop, _ route: Route, using app: NavigationApp) {
         Task {
-            let app = services.settings.settings.navigationApp == .ask ? NavigationApp.appleMaps : services.settings.settings.navigationApp
-            do { try await services.navigation.open(stop: stop, routeID: route.id, using: app) } catch { navError = error.localizedDescription }
+            do { try await services.navigation.open(stop: stop, routeID: route.id, using: app) }
+            catch { navError = error.localizedDescription }
         }
     }
 }
@@ -207,7 +227,7 @@ struct AddressEditSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(checking) }
             }
             .task { await check() }
         }
@@ -220,7 +240,10 @@ struct AddressEditSheet: View {
     private func check() async {
         checking = true
         defer { checking = false }
-        candidate.verification = await services.verifier.verify(candidate.address)
+        let address = candidate.address
+        let result = await services.verifier.verify(address)
+        guard candidate.address == address else { return }
+        candidate.verification = result
     }
 
     private func save() async {
@@ -310,6 +333,7 @@ struct TimeWindowEditor: View {
                 Text("Prefer to arrive by").tag(2)
             }
             .pickerStyle(.menu)
+            .accessibilityIdentifier("deliveryTimePicker")
             if kind == 1 {
                 MinutePicker(title: "From", minute: $start, timeZone: route.timeZone, allowNextDay: true)
                 MinutePicker(title: "Until", minute: $end, timeZone: route.timeZone, allowNextDay: true)
@@ -321,6 +345,7 @@ struct TimeWindowEditor: View {
             }
             if kind != currentKind || (kind != 0 && (start != stop.timeWindow?.startMinute ?? start || end != stop.timeWindow?.endMinute)) {
                 Button("Save delivery time") { save() }
+                    .accessibilityIdentifier("saveDeliveryTime")
                     .disabled(kind == 1 && end <= start)
                     .frame(minHeight: Theme.minTouch)
             }

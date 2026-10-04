@@ -19,7 +19,8 @@ struct MapSheetLayout<MapContent: View, SheetContent: View>: View {
     var collapsedHeight: CGFloat = 230
     /// Share of the height the panel takes at the half-height detent. Short screens (iPhone SE) get
     /// a little more so panel content isn't squeezed under its pinned controls.
-    var mediumFraction: CGFloat = 0.55
+    var mediumFraction: CGFloat = 0.70
+    var allowsCollapse = true
     @ViewBuilder var map: (_ bottomInset: CGFloat) -> MapContent
     @ViewBuilder var sheet: () -> SheetContent
 
@@ -35,8 +36,10 @@ struct MapSheetLayout<MapContent: View, SheetContent: View>: View {
                 .medium: full * min(mediumFraction + (full < 620 ? 0.08 : 0), 0.8),
                 .expanded: full * 0.92,
             ]
+            let availableHeights = heights.filter { allowsCollapse || $0.key != .collapsed }
             let base = heights[detent] ?? full * 0.5
-            let height = min(max(base - drag, heights[.collapsed]! * 0.8), full)
+            let minimumHeight = allowsCollapse ? heights[.collapsed]! * 0.8 : heights[.medium]!
+            let height = min(max(base - drag, minimumHeight), full)
             ZStack(alignment: .bottom) {
                 // The map occupies only the area above the panel (plus the panel's rounded corner
                 // overlap), so map framing and the provider's attribution stay visible.
@@ -44,7 +47,7 @@ struct MapSheetLayout<MapContent: View, SheetContent: View>: View {
                     .frame(height: max(full - height + cornerOverlap, cornerOverlap * 2))
                     .frame(maxHeight: .infinity, alignment: .top)
                 VStack(spacing: 0) {
-                    handle(heights: heights)
+                    handle(heights: availableHeights)
                     sheet()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
@@ -54,16 +57,24 @@ struct MapSheetLayout<MapContent: View, SheetContent: View>: View {
                 .shadow(color: .black.opacity(0.12), radius: 10, y: -2)
             }
             .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85), value: detent)
+            .onChange(of: full, initial: true) { _, height in
+                if height > 0 && height < 620 && detent == .medium { detent = .expanded }
+            }
         }
     }
 
     private func handle(heights: [SheetDetent: CGFloat]) -> some View {
-        Capsule()
-            .fill(Color.secondary.opacity(0.5))
-            .frame(width: 40, height: 5)
-            .frame(maxWidth: .infinity, minHeight: 22)
-            .contentShape(Rectangle())
-            .gesture(
+        Button {
+            detent = detent == .expanded ? (allowsCollapse ? .collapsed : .medium) : .expanded
+        } label: {
+            Capsule()
+                .fill(Color.secondary.opacity(0.5))
+                .frame(width: 40, height: 5)
+                .frame(maxWidth: .infinity, minHeight: Theme.minTouch)
+                .contentShape(Rectangle())
+        }
+            .buttonStyle(.plain)
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 4)
                     .updating($drag) { value, state, _ in state = value.translation.height }
                     .onEnded { value in
@@ -71,12 +82,12 @@ struct MapSheetLayout<MapContent: View, SheetContent: View>: View {
                         detent = heights.min { abs($0.value - target) < abs($1.value - target) }?.key ?? detent
                     }
             )
-            .onTapGesture { detent = detent == .expanded ? .collapsed : SheetDetent(rawValue: detent.rawValue + 1) ?? .expanded }
-            .accessibilityElement()
+            .accessibilityIdentifier("panelHandle")
+            .accessibilityHint("Tap or drag to resize the stop list")
             .accessibilityLabel("Stop list panel, \(detent.label)")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(named: "Expand") { detent = .expanded }
             .accessibilityAction(named: "Half height") { detent = .medium }
-            .accessibilityAction(named: "Collapse") { detent = .collapsed }
+            .accessibilityAction(named: "Collapse") { detent = allowsCollapse ? .collapsed : .medium }
     }
 }

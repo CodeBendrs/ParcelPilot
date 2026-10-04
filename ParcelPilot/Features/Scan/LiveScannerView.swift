@@ -17,8 +17,20 @@ final class ScannerController {
 
     var isRunning: Bool { scanner?.isScanning ?? false }
 
-    static var isSupported: Bool { DataScannerViewController.isSupported }
-    static var isAvailable: Bool { DataScannerViewController.isAvailable }
+    static var isSupported: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return DataScannerViewController.isSupported
+        #endif
+    }
+    static var isAvailable: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return DataScannerViewController.isAvailable
+        #endif
+    }
 
     func capture() {
         guard let scanner, !capturing else { return }
@@ -134,7 +146,13 @@ struct LiveScannerView: UIViewControllerRepresentable {
 struct CameraCaptureView: UIViewControllerRepresentable {
     var onImage: (UIImage?) -> Void
 
-    static var isAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+    static var isAvailable: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return UIImagePickerController.isSourceTypeAvailable(.camera)
+        #endif
+    }
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()

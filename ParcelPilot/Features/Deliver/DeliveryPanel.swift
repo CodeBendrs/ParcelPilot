@@ -64,7 +64,8 @@ struct DeliveryPanel: View {
 
                     NeedsDecisionSection(snapshot: snapshot)
 
-                    HStack {
+                    ViewThatFits(in: .horizontal) {
+                      HStack {
                         Button {
                             sheet = .optimize
                         } label: {
@@ -78,6 +79,14 @@ struct DeliveryPanel: View {
                                 .font(.subheadline)
                                 .frame(minHeight: Theme.minTouch)
                         }
+                      }
+                      VStack(alignment: .leading, spacing: Theme.Space.s) {
+                        Button { sheet = .optimize } label: { Label("Re-plan remaining", systemImage: "arrow.triangle.branch") }
+                            .buttonStyle(SecondaryButtonStyle())
+                        if next != nil {
+                            Button("Finish early…") { confirmFinish = true }.frame(minHeight: Theme.minTouch)
+                        }
+                      }
                     }
                 }
                 .padding(.horizontal, Theme.Space.l)
@@ -85,7 +94,8 @@ struct DeliveryPanel: View {
             }
             if let next {
                 DeliveryActionBar(
-                    canNavigate: next.address.civicNumber != nil,
+                    destination: [next.address.streetLine ?? next.address.singleLine, next.address.unitLabel].compactMap { $0 }.joined(separator: " · "),
+                    canNavigate: NavigationLauncher.canNavigate(to: next),
                     navigate: { navigate(to: next) },
                     delivered: { act(.delivered, at: next) },
                     failed: { act(.failed, at: next) },
@@ -109,6 +119,7 @@ struct DeliveryPanel: View {
         .confirmationDialog("Navigate with", isPresented: Binding(get: { choosingNavApp != nil }, set: { if !$0 { choosingNavApp = nil } }), titleVisibility: .visible) {
             Button("Apple Maps") { if let s = choosingNavApp { launch(s, .appleMaps) } }
             Button("Google Maps") { if let s = choosingNavApp { launch(s, .googleMaps) } }
+            Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog("Finish this route?", isPresented: $confirmFinish, titleVisibility: .visible) {
             Button("Finish route") { services.store.finish(snapshot); toasts.show("Route finished. Find it in History.", symbol: "flag.checkered", tone: .success) }
@@ -120,6 +131,7 @@ struct DeliveryPanel: View {
         .alert("Couldn't open navigation", isPresented: Binding(get: { navError != nil }, set: { if !$0 { navError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(navError ?? "") }
+        .onChange(of: snapshot.nextStop()?.id, initial: true) { _, id in selectedStopID = id }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, let handoff = services.navigation.lastHandoff, handoff.routeID == snapshot.route.id else { return }
             if Date().timeIntervalSince(handoff.at) < 6 * 3600 { returnedFromNavigation = handoff.stopID; selectedStopID = handoff.stopID }
@@ -259,6 +271,11 @@ struct NextStopInfo: View {
                                 .foregroundStyle(p.storageLocation == nil ? .secondary : .primary)
                             Text([p.trackingID.map { "…" + String($0.suffix(6)) }, p.size?.label, p.recipientName, status == .pending ? nil : status.label].compactMap { $0 }.joined(separator: " · "))
                                 .font(.caption).foregroundStyle(.secondary)
+                            if !p.notes.isEmpty {
+                                Label(p.notes, systemImage: "note.text")
+                                    .font(.subheadline)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     .accessibilityElement(children: .combine)
@@ -272,6 +289,7 @@ struct NextStopInfo: View {
 /// Delivery actions, pinned at the bottom of the panel so they are always within thumb reach.
 /// Delivered is the largest and lowest control.
 struct DeliveryActionBar: View {
+    var destination: String
     var canNavigate: Bool
     var navigate: () -> Void
     var delivered: () -> Void
@@ -280,6 +298,12 @@ struct DeliveryActionBar: View {
 
     var body: some View {
         VStack(spacing: Theme.Space.s) {
+            Text(destination)
+                .font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .accessibilityIdentifier("actionDestination")
             HStack(spacing: Theme.Space.s) {
                 Button(action: navigate) { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill") }
                     .buttonStyle(CompactActionStyle(tint: Theme.brand))
@@ -411,7 +435,7 @@ struct PackageOutcomeSheet: View {
                     .font(.headline)
                 }
                 Section("Packages") {
-                    ForEach(packages) { p in
+                    ForEach(Array(packages.enumerated()), id: \.element.id) { index, p in
                         Button {
                             if chosen.contains(p.id) { chosen.remove(p.id) } else { chosen.insert(p.id) }
                         } label: {
@@ -424,6 +448,7 @@ struct PackageOutcomeSheet: View {
                             }
                             .frame(minHeight: Theme.minTouch)
                         }
+                        .accessibilityIdentifier("outcomePackage.\(index)")
                         .accessibilityAddTraits(chosen.contains(p.id) ? .isSelected : [])
                     }
                 }
@@ -445,7 +470,7 @@ struct PackageOutcomeSheet: View {
             }
             .onAppear { chosen = Set(packages.map(\.id)) }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents(kind == .failed ? [.large] : [.medium, .large])
     }
 }
 

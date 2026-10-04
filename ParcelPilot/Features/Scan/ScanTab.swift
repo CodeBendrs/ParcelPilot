@@ -73,7 +73,10 @@ struct ScanScreen: View {
             controller.stop()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { controller.stop() } else if visible { controller.start() }
+            if phase != .active { controller.stop() } else if visible {
+                cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
+                controller.start()
+            }
         }
         .onChange(of: model?.batchMode) { _, batch in controller.autoCaptureEnabled = batch ?? false }
         .onChange(of: model?.confirmation == nil) { _, closed in
@@ -155,21 +158,25 @@ struct ScanScreen: View {
     // MARK: Camera / fallbacks
 
     @ViewBuilder private var cameraArea: some View {
-        switch cameraStatus {
-        case .notDetermined:
-            permissionPrompt
-        case .denied:
-            fallback(title: "Camera access is off", message: "Turn on camera access in Settings to scan labels, or import a photo of the label / type the address.", showSettings: true)
-        case .restricted:
-            fallback(title: "Camera is restricted", message: "This iPhone doesn't allow camera use. Import a photo of the label or type the address.", showSettings: false)
-        default:
-            if ScannerController.isSupported && ScannerController.isAvailable {
-                LiveScannerView(controller: controller)
-                    .accessibilityLabel("Camera viewfinder")
-            } else if CameraCaptureView.isAvailable {
-                fallback(title: "Live scanning isn't available on this iPhone", message: "Take a photo of the label instead — it's read the same way, on this iPhone.", showSettings: false, showCamera: true)
-            } else {
-                fallback(title: "No camera available", message: "This device (for example the Simulator) has no camera. Import a photo of a label or type the address.", showSettings: false)
+        if !ScannerController.isSupported && !CameraCaptureView.isAvailable {
+            fallback(title: "No camera available", message: "Import a photo of a label or type the address to add a stop.", showSettings: false)
+        } else {
+            switch cameraStatus {
+            case .notDetermined:
+                permissionPrompt
+            case .denied:
+                fallback(title: "Camera access is off", message: "Turn on camera access in Settings to scan labels, or import a photo of the label / type the address.", showSettings: true)
+            case .restricted:
+                fallback(title: "Camera is restricted", message: "This iPhone doesn't allow camera use. Import a photo of the label or type the address.", showSettings: false)
+            default:
+                if ScannerController.isSupported && ScannerController.isAvailable {
+                    LiveScannerView(controller: controller)
+                        .accessibilityLabel("Camera viewfinder")
+                } else if CameraCaptureView.isAvailable {
+                    fallback(title: "Live scanning isn't available on this iPhone", message: "Take a photo of the label instead — it's read the same way, on this iPhone.", showSettings: false, showCamera: true)
+                } else {
+                    fallback(title: "No camera available", message: "This device (for example the Simulator) has no camera. Import a photo of a label or type the address.", showSettings: false)
+                }
             }
         }
     }
@@ -278,7 +285,7 @@ struct ScanScreen: View {
                     Image(systemName: "viewfinder").font(.title.weight(.semibold)).foregroundStyle(.white)
                 }
             }
-            .disabled(model?.isBusy ?? true || cameraStatus != .authorized)
+            .disabled((model?.isBusy ?? true) || cameraStatus != .authorized || (!ScannerController.isAvailable && !CameraCaptureView.isAvailable))
             .accessibilityLabel("Capture label")
             .accessibilityIdentifier("shutter")
             Spacer()

@@ -19,6 +19,7 @@ struct AddStopsMenu: View {
                 Button { sheet = .paste } label: { menuRow("Paste a list", "One address per line, or blank lines between addresses.", "doc.on.clipboard") }
                     .accessibilityIdentifier("addPaste")
                 Button { sheet = .csv } label: { menuRow("Import CSV", "Map columns, review errors and duplicates.", "tablecells") }
+                    .accessibilityIdentifier("addCSV")
                 let drafts = services.drafts.drafts(for: snapshot.route.id).count
                 if drafts > 0 {
                     Button { sheet = .reviewQueue } label: { menuRow("Review queue (\(drafts))", "Scanned labels that need a decision.", "tray.full") }
