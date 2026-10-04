@@ -119,7 +119,7 @@ struct StopDetailView: View {
         .sheet(item: $editingAddress) { box in
             AddressEditSheet(candidate: box.candidate, stop: stop, route: route)
         }
-        .sheet(item: $editingPackage) { p in PackageEditor(package: p, route: route) }
+        .sheet(item: $editingPackage) { p in PackageEditor(package: p, route: route, isNew: !packages.contains { $0.id == p.id }) }
         .sheet(isPresented: $pinning) {
             PinPlacementView(initial: stop.resolution?.located?.point) { point in
                 var s = stop
@@ -132,7 +132,13 @@ struct StopDetailView: View {
             PODCaptureView(routeID: route.id, stopID: stop.id, packageIDs: packages.map(\.id))
         }
         .confirmationDialog("Remove this stop?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Remove stop", role: .destructive) { services.store.delete(stop: stop, from: snapshot); dismiss() }
+            Button("Remove stop", role: .destructive) {
+                services.store.delete(stop: stop, from: snapshot)
+                toasts.show("Stop removed", symbol: "trash", tone: .neutral, undo: {
+                    services.store.restore(stop: stop, packages: packages, in: route.id)
+                })
+                dismiss()
+            }
         } message: { Text("Its \(packages.count) package(s) are removed from the route. Recorded outcomes stay in history.") }
         .alert("Couldn't open navigation", isPresented: Binding(get: { navError != nil }, set: { if !$0 { navError = nil } })) {
             Button("OK", role: .cancel) {}
@@ -152,7 +158,6 @@ struct StopDetailView: View {
 
     private func addPackage(_ snapshot: RouteSnapshot, _ stop: Stop) {
         let p = Package(stopID: stop.id, recipientName: stop.address.recipientName, source: .manual)
-        services.store.commitPrepared([.putPackage(snapshot.route.id, p), .updateRoute(snapshot.route, bumpRevision: true)], label: "Add package")
         editingPackage = p
     }
 
@@ -236,6 +241,7 @@ struct AddressEditSheet: View {
 struct PackageEditor: View {
     @State var package: Package
     let route: Route
+    var isNew = false
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
 
@@ -256,7 +262,16 @@ struct PackageEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { services.store.update(package: package, in: route); dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") {
+                    if isNew {
+                        let currentRoute = services.store.current?.route ?? route
+                        services.store.commitPrepared([.putPackage(route.id, package), .updateRoute(currentRoute, bumpRevision: true)], label: "Add package")
+                    } else {
+                        services.store.update(package: package, in: route)
+                    }
+                    dismiss()
+                }
+                .accessibilityIdentifier("savePackage") }
             }
         }
         .presentationDetents([.large])
@@ -274,6 +289,7 @@ struct NotesEditor: View {
             .focused($focused)
             .onChange(of: focused) { _, f in if !f { save(text) } }
             .onSubmit { save(text) }
+            .onDisappear { save(text) }
     }
 }
 

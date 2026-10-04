@@ -150,6 +150,7 @@ final class RouteStore {
         r.updatedAt = clock()
         r.summary = snapshot.summary()
         backend.commit(ChangeSet([.updateRoute(r, bumpRevision: false)], label: "Finish route"))
+        if currentRouteID == r.id { currentRouteID = nil }
     }
 
     // MARK: Stops & packages
@@ -242,6 +243,15 @@ final class RouteStore {
         ops.append(.deleteStop(snapshot.route.id, stop.id))
         ops.append(.updateRoute(touched(snapshot.route), bumpRevision: true))
         backend.commit(ChangeSet(ops, label: "Remove stop"))
+    }
+
+    /// Restore a removal using the current route so Undo never overwrites newer route settings.
+    func restore(stop: Stop, packages: [Package], in routeID: RouteID) {
+        guard let route = routes.first(where: { $0.id == routeID }) else { return }
+        let ops: [ChangeOp] = [.putStop(routeID, stop)]
+            + packages.map { .putPackage(routeID, $0) }
+            + [.updateRoute(touched(route), bumpRevision: true)]
+        commitPrepared(ops, label: "Undo remove stop")
     }
 
     func update(package: Package, in route: Route) {

@@ -2,6 +2,7 @@ import ParcelPilotKit
 import SwiftUI
 
 struct HistoryView: View {
+    var selectTab: (AppTab) -> Void
     @Environment(AppServices.self) private var services
 
     var body: some View {
@@ -21,7 +22,7 @@ struct HistoryView: View {
             }
             .navigationTitle("History")
             .navigationDestination(for: RouteID.self) { id in
-                if let route = services.store.routes.first(where: { $0.id == id }) { RouteSummaryView(route: route) }
+                if let route = services.store.routes.first(where: { $0.id == id }) { RouteSummaryView(route: route, selectTab: selectTab) }
             }
         }
     }
@@ -49,9 +50,11 @@ struct HistoryRow: View {
 
 struct RouteSummaryView: View {
     let route: Route
+    var selectTab: (AppTab) -> Void
     @Environment(AppServices.self) private var services
     @State private var snapshot: RouteSnapshot?
     @State private var loading = true
+    @State private var error: String?
 
     var body: some View {
         let summary = snapshot?.summary() ?? route.summary ?? RouteSummary()
@@ -79,7 +82,7 @@ struct RouteSummaryView: View {
             }
             Section {
                 if let d = route.plannedDistance, d.expiresAt > Date() {
-                    LabeledContent("Planned road distance", value: DisplayFormat.distance(meters: d.meters, unit: services.settings.settings.distanceUnit))
+                    LabeledContent(d.provider == .google ? "Planned road distance" : "Estimated straight-line distance", value: DisplayFormat.distance(meters: d.meters, unit: services.settings.settings.distanceUnit))
                     ProvenanceText(text: "Source: \(d.provider.displayName), calculated \(DisplayFormat.dateTime(d.calculatedAt, timeZone: route.timeZone)). Planned, not driven — kept for 24 hours under the provider's terms.")
                 } else {
                     Text("Distance not available").foregroundStyle(.secondary)
@@ -105,8 +108,14 @@ struct RouteSummaryView: View {
                 ProgressView()
             }
             Section {
-                Button("Reopen route") { services.store.resume(route) }
-                Button("Duplicate as new route") { Task { _ = try? await services.store.duplicate(route) } }
+                Button("Reopen route") { services.store.resume(route); selectTab(.route) }
+                Button("Duplicate as new route") {
+                    Task {
+                        do { _ = try await services.store.duplicate(route); selectTab(.route) }
+                        catch { self.error = error.localizedDescription }
+                    }
+                }
+                if let error { Banner(symbol: "exclamationmark.triangle", text: error, tone: .danger) }
             }
         }
         .navigationTitle(route.name)

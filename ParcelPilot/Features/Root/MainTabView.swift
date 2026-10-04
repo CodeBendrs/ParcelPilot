@@ -31,7 +31,7 @@ struct MainTabView: View {
                 .toasts(toasts)
                 .tabItem { Label("Scan", systemImage: "barcode.viewfinder") }
                 .tag(AppTab.scan)
-            HistoryView()
+            HistoryView(selectTab: { tab = $0 })
                 .toasts(toasts)
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
                 .tag(AppTab.history)

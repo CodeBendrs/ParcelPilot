@@ -29,7 +29,7 @@ struct PackageFinderView: View {
                     let stop = live.stops.first { $0.id == p.stopID }
                     let n = (ordered.firstIndex { $0.id == p.stopID } ?? -1) + 1
                     Button {
-                        if stop != nil { onSelect(p.stopID); dismiss() }
+                        if stop != nil { onSelect(p.stopID) }
                     } label: {
                         HStack(alignment: .top, spacing: Theme.Space.m) {
                             if n > 0 { StopNumberView(number: n, status: stop.map { ledger.stopStatus($0, packages: live.packages) } ?? .pending) }
@@ -174,7 +174,7 @@ struct PODCaptureView: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
     }
 
     private func save(_ image: UIImage) {

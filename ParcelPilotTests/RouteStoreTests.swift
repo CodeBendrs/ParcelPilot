@@ -123,6 +123,25 @@ struct RouteStoreTests {
         #expect(snap.stops[0].id != add.stopID)
     }
 
+
+    @Test("Undo removal restores packages and outcomes without overwriting subsequent route edits")
+    func undoRemoval() throws {
+        let env = TestEnvironment()
+        env.makeRoute()
+        let added = env.store.addDelivery(to: env.snapshot, address: .e1(), status: .demoSynthetic, resolution: nil, reviewReasons: [], packages: [PackageDraft(), PackageDraft()], source: .manual)
+        let stop = try #require(env.snapshot.stops.first)
+        let packages = env.snapshot.packages
+        env.store.record(.delivered, packageIDs: [added.packageIDs[0]], stopID: stop.id, in: env.snapshot, label: "Delivered")
+        env.store.delete(stop: stop, from: env.snapshot)
+        #expect(env.snapshot.stops.isEmpty)
+        env.store.rename(env.snapshot.route, to: "Edited after removal")
+        env.store.restore(stop: stop, packages: packages, in: env.snapshot.route.id)
+        #expect(env.snapshot.route.name == "Edited after removal")
+        #expect(env.snapshot.stops.count == 1)
+        #expect(env.snapshot.packages.count == 2)
+        #expect(env.snapshot.ledger.status(of: added.packageIDs[0]).isHandled)
+    }
+
     @Test("Archive and resume")
     func archiveResume() {
         let env = TestEnvironment()
