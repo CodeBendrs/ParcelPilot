@@ -285,7 +285,8 @@ struct ScanScreen: View {
                     Image(systemName: "viewfinder").font(.title.weight(.semibold)).foregroundStyle(.white)
                 }
             }
-            .disabled((model?.isBusy ?? true) || cameraStatus != .authorized || (!ScannerController.isAvailable && !CameraCaptureView.isAvailable))
+            .disabled(!canCapture)
+            .opacity(canCapture ? 1 : 0.35)
             .accessibilityLabel("Capture label")
             .accessibilityIdentifier("shutter")
             Spacer()
@@ -300,6 +301,10 @@ struct ScanScreen: View {
         .font(.caption.weight(.semibold))
         .padding(.horizontal, Theme.Space.xl)
         .padding(.vertical, Theme.Space.m)
+    }
+
+    private var canCapture: Bool {
+        !(model?.isBusy ?? true) && cameraStatus == .authorized && (ScannerController.isAvailable || CameraCaptureView.isAvailable)
     }
 }
 

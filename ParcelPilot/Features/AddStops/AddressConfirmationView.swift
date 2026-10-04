@@ -18,17 +18,17 @@ struct AddressConfirmationView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                if !candidate.alternatives.isEmpty { choiceSection }
-                signalsSection
-                if let label = candidate.fromLabel, !candidate.driverEdited || candidate.verification != nil { comparisonSection(label) }
-                fieldsSection
-                reasonsSection
-                placementSection
-                packageSection
-                actionsSection
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Form {
+                    if !candidate.alternatives.isEmpty { choiceSection }
+                    signalsSection
+                    if let label = candidate.fromLabel, !candidate.driverEdited || candidate.verification != nil { comparisonSection(label) }
+                    fieldsSection
+                    reasonsSection
+                    placementSection
+                    packageSection
+                    actionsSection
+                }
                 addAction
                     .padding(.horizontal, Theme.Space.l)
                     .padding(.vertical, Theme.Space.s)
@@ -48,6 +48,7 @@ struct AddressConfirmationView: View {
             }
         }
         .interactiveDismissDisabled()
+        .presentationDetents([.large])
     }
 
     // MARK: Sections
