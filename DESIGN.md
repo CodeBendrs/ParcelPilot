@@ -69,9 +69,11 @@ warning (duplicate, sent to review, failure), selection (reorder, reason chips).
 ```
 Decisions: the map is laid out *above* the panel (not underneath it) so framing and attribution are
 correct at every panel height; the panel handle has VoiceOver actions (Expand / Half / Collapse).
-The half-height panel takes 55 % of the height in Plan, 64 % in Deliver (the next stop and the action
-bar must be visible together) and 72 % at accessibility text sizes; short screens (iPhone SE) get
-+8 %.
+The medium panel takes 70 % of the available height, or 72 % at accessibility text sizes; short
+screens get +8 %. Short screens and accessibility sizes start expanded. The handle is a 44 pt
+button with tap, drag and VoiceOver resize actions. Deliver cannot collapse below medium height.
+Its pinned action bar repeats the destination and unit, so both remain visible while reading notes
+or reviewing earlier failures.
 
 ### Scan (tab 2)
 Header: target route + **Batch** toggle (with plain explanation). Camera area: live scanner with a
@@ -87,14 +89,17 @@ Map match, each with a plain explanation) → label text beside the map result +
 → editable fields (unit and type, number, street, PO box/RR, city, province, postal code with an
 explicit "Use X instead of Y?" suggestion for OCR confusions) → reasons needing review (+ place a pin)
 → placement (existing stop / other unit in building / duplicate tracking) → package fields (tracking,
-vehicle location quick picks, size, notes) → **Add to route** / Save for review / Discard.
+vehicle location quick picks, size, notes) → Save for review / Discard. **Add to route** is pinned
+below the scrolling form; unresolved addresses use **Add with address warning**. Field captions
+remain visible after typing, and confirmation waits for any address check already in progress.
 
 ### Optimize sheet
 Options (start from route start / current location / a stop; fixed next stop; traffic-aware; compare
 with current order) with footers explaining cost and privacy → "What gets planned" (counts + reasons for
 excluded stops) → Calculate → progress (server runs asynchronously; safe to close) → preview: metrics,
 savings only with a computed baseline, unassigned stops with suggestions, notes, changed positions →
-**Use this order** / Keep my current order. Stale and failed states explain and offer Recalculate.
+**Use this order** / Keep my current order, pinned below the scrolling preview. Metrics adapt to
+available width. Stale and failed states explain and offer Recalculate.
 
 ### History (tab 3) and Settings (tab 4)
 History: finished/archived routes → summary with actual times from outcomes and distance with its
@@ -124,7 +129,9 @@ Dynamic Type everywhere (no fixed font sizes for text); VoiceOver labels combine
 address, unit, package count, status and ETA; outcome toasts are announced; selected chips expose
 `.isSelected`; 44 pt targets; Reduce Motion respected; colour never the only signal.
 Screenshots of light, dark and large-text states are produced by `scripts/capture-screenshots.sh`
-(iPhone SE 3rd gen and iPhone 17 Pro Max × light/dark × Large/AX3) and were inspected.
+(iPhone SE 3rd gen and iPhone 17 Pro Max × light/dark × Large/AX3). The harness waits for actual
+screen controls through XCTest before accepting captures. See the dated simulator audit for the
+inspected screenshots, workflow results and remaining device-only checks.
 
 Rules for accessibility text sizes (`dynamicTypeSize.isAccessibilitySize`), from that review:
 - Side-by-side title + button rows stack vertically (plan summary + Optimize, banner + action, Scan
@@ -136,6 +143,8 @@ Rules for accessibility text sizes (`dynamicTypeSize.isAccessibilitySize`), from
   (≤ xxxLarge).
 - Explanatory text in fixed-height areas (camera permission/fallback) uses `FitOrScroll`: shown as
   is when it fits, otherwise scrollable — never truncated.
-Known limits on iPhone SE at AX3 and larger: the next stop's street line sits just below the fold in
-Deliver at half height (unit badge visible; scroll or expand the panel), and the "Allow camera"
-button scrolls inside the camera card (Import and Type stay visible).
+At AX3 and larger on iPhone SE, long stop cards, planning content and camera explanations require
+scrolling. The delivery destination and action bar stay visible. On Simulator, camera-only controls
+are disabled and Import / Type provide usable alternatives; physical-device permission handling,
+torch and live scanning still require device testing. Screenshot inspection does not establish
+VoiceOver or full accessibility compliance.
