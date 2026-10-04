@@ -33,13 +33,24 @@ final class NavigationLauncher {
         }
     }
 
+    static func driverPin(for stop: Stop) -> GeoPoint? {
+        guard let located = stop.resolution?.located, located.source == .driverPin else { return nil }
+        return located.point
+    }
+
+    static func canNavigate(to stop: Stop) -> Bool {
+        if driverPin(for: stop) != nil { return true }
+        if case .success = NavigationHandoff.destinationQuery(for: stop.address) { return true }
+        return false
+    }
+
     func open(stop: Stop, routeID: RouteID, using app: NavigationApp) async throws {
         let request: NavigationHandoff.Request
         switch app {
         case .googleMaps:
-            request = try NavigationHandoff.googleMaps(address: stop.address, placeID: stop.resolution?.provider == .google ? stop.resolution?.placeID : nil, appInstalled: googleMapsInstalled).mapError { _ in LaunchError.noStreetAddress }.get()
+            request = try NavigationHandoff.googleMaps(address: stop.address, placeID: stop.resolution?.provider == .google ? stop.resolution?.placeID : nil, appInstalled: googleMapsInstalled, driverPin: Self.driverPin(for: stop)).mapError { _ in LaunchError.noStreetAddress }.get()
         case .appleMaps, .ask:
-            request = try NavigationHandoff.appleMaps(address: stop.address).mapError { _ in LaunchError.noStreetAddress }.get()
+            request = try NavigationHandoff.appleMaps(address: stop.address, driverPin: Self.driverPin(for: stop)).mapError { _ in LaunchError.noStreetAddress }.get()
         }
         let opened = await UIApplication.shared.open(request.url)
         guard opened else { throw LaunchError.couldNotOpen }

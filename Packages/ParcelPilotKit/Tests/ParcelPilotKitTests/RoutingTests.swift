@@ -403,6 +403,17 @@ struct NavigationTests {
         if case .failure(.noStreetAddress) = NavigationHandoff.appleMaps(address: po) {} else { Issue.record("expected failure") }
     }
 
+    @Test("Driver pins support rural stops and override provider place IDs")
+    func driverPinNavigation() throws {
+        let rural = CanadianAddressParser.parse(singleLine: "PO BOX 123, VICTORIA BC V8W 1A1").address
+        let pin = GeoPoint(latitude: 48.45, longitude: -123.38)
+        let apple = try NavigationHandoff.appleMaps(address: rural, driverPin: pin).get()
+        #expect(apple.query == "48.45,-123.38")
+        let google = try NavigationHandoff.googleMaps(address: address, placeID: "old-building", appInstalled: false, driverPin: pin).get()
+        #expect(google.query == apple.query)
+        #expect(!google.url.absoluteString.contains("destination_place_id"))
+    }
+
     @Test func formatting() {
         #expect(DisplayFormat.distance(meters: 950, unit: .kilometres) == "950 m")
         #expect(DisplayFormat.distance(meters: 12_400, unit: .kilometres) == "12 km")

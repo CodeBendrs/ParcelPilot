@@ -27,17 +27,25 @@ public enum NavigationHandoff {
         return .success(address.buildingQuery)
     }
 
-    public static func appleMaps(address: PostalAddress) -> Result<Request, Problem> {
-        destinationQuery(for: address).map { query in
+    public static func appleMaps(address: PostalAddress, driverPin: GeoPoint? = nil) -> Result<Request, Problem> {
+        navigationQuery(address: address, driverPin: driverPin).map { query in
             var c = URLComponents(string: "https://maps.apple.com/")!
             c.queryItems = [URLQueryItem(name: "daddr", value: query), URLQueryItem(name: "dirflg", value: "d")]
             return Request(target: .appleMaps, url: c.url!, query: query)
         }
     }
 
+    /// A pin placed by the driver takes priority over text. Provider coordinates never enter here.
+    private static func navigationQuery(address: PostalAddress, driverPin: GeoPoint?) -> Result<String, Problem> {
+        if let driverPin {
+            return .success("\(driverPin.latitude),\(driverPin.longitude)")
+        }
+        return destinationQuery(for: address)
+    }
+
     /// - Parameter appInstalled: whether `comgooglemaps://` can be opened.
-    public static func googleMaps(address: PostalAddress, placeID: String?, appInstalled: Bool) -> Result<Request, Problem> {
-        destinationQuery(for: address).map { query in
+    public static func googleMaps(address: PostalAddress, placeID: String?, appInstalled: Bool, driverPin: GeoPoint? = nil) -> Result<Request, Problem> {
+        navigationQuery(address: address, driverPin: driverPin).map { query in
             if appInstalled {
                 var c = URLComponents()
                 c.scheme = "comgooglemaps"
@@ -47,7 +55,7 @@ public enum NavigationHandoff {
             }
             var c = URLComponents(string: "https://www.google.com/maps/dir/")!
             var items = [URLQueryItem(name: "api", value: "1"), URLQueryItem(name: "destination", value: query), URLQueryItem(name: "travelmode", value: "driving")]
-            if let placeID { items.append(URLQueryItem(name: "destination_place_id", value: placeID)) }
+            if driverPin == nil, let placeID { items.append(URLQueryItem(name: "destination_place_id", value: placeID)) }
             c.queryItems = items
             return Request(target: .googleMapsWeb, url: c.url!, query: query)
         }
