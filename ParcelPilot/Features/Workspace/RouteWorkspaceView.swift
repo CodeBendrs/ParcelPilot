@@ -8,10 +8,11 @@ enum WorkspaceMode: String, CaseIterable, Identifiable {
 }
 
 enum WorkspaceSheet: Identifiable {
-    case addStops, optimize, stop(StopID), settings, finder, reviewQueue, manualAdd, paste, csv
+    case addStops, optimize, stop(StopID), work(StopID), settings, finder, reviewQueue, manualAdd, paste, csv, stops
     var id: String {
         switch self {
         case let .stop(id): return "stop-\(id)"
+        case let .work(id): return "work-\(id)"
         default: return String(describing: self)
         }
     }
@@ -26,54 +27,100 @@ struct RouteWorkspaceView: View {
     @Environment(ToastCenter.self) private var toasts
     // Screenshot/UI-test hook: -PPInitialMode deliver
     @State private var mode: WorkspaceMode? = UserDefaults.standard.string(forKey: "PPInitialMode").flatMap(WorkspaceMode.init(rawValue:))
-    @State private var detent: SheetDetent = .medium
     @State private var selectedStopID: StopID?
     @State private var tracker: PlanTracker?
     @State private var sheet: WorkspaceSheet?
     @State private var renaming = false
     @State private var newName = ""
     @State private var error: String?
+    @State private var scanner = false
+    @State private var finishFromStops = false
+    @State private var confirmCurrentOrderStart = false
+    @State private var planningHeaderHeight: CGFloat = 80
+    @GestureState private var panelDragOffset: CGFloat = 0
+    @SceneStorage("atlas.planList") private var listMode = false
+    @SceneStorage("atlas.keptOrderRoute") private var keptRoute = ""
+    @SceneStorage("atlas.keptOrderRevision") private var keptRevision = -1
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var effectiveMode: WorkspaceMode { mode ?? (snapshot.route.status == .active ? .deliver : .plan) }
-
-    /// Half-height panel share: Deliver needs the next stop and the actions visible together, and
-    /// accessibility text sizes need room more than map area.
-    private var mediumFraction: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 0.72 }
-        return 0.70
+    private var execution: RouteExecutionSession? { services.store.executionSession(for: snapshot.route.id) }
+    private var effectiveMode: WorkspaceMode {
+        mode ?? ((execution?.state == .active || execution?.state == .paused) ? .deliver : .plan)
     }
 
     var body: some View {
         let planState = tracker?.state(for: snapshot) ?? .none
-        MapSheetLayout(detent: $detent, mediumFraction: mediumFraction, allowsCollapse: effectiveMode == .plan) { inset in
-            RouteMapView(snapshot: snapshot, planState: planState, selectedStopID: $selectedStopID, bottomInset: inset)
-                .ignoresSafeArea(edges: .bottom)
-        } sheet: {
-            VStack(spacing: Theme.Space.s) {
-                HStack(spacing: Theme.Space.m) {
-                    Picker("Mode", selection: Binding(get: { effectiveMode }, set: { mode = $0; if $0 == .deliver && detent == .collapsed { detent = .medium } })) {
-                        ForEach(WorkspaceMode.allCases) { Text($0.label).tag($0) }
+        Group {
+            switch effectiveMode {
+            case .plan:
+                GeometryReader { geometry in
+                    let availableHeight = max(0, geometry.size.height - planningHeaderHeight)
+                    let collapsedHeight = min(availableHeight, max(320, geometry.size.height * 0.46))
+                    let restingHeight = listMode ? availableHeight : collapsedHeight
+                    let panelHeight = dynamicTypeSize.isAccessibilitySize ? availableHeight
+                        : min(availableHeight, max(collapsedHeight, restingHeight - panelDragOffset))
+                    let mapHeight = max(0, availableHeight - panelHeight)
+                    VStack(spacing: 0) {
+                        planningHeader
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { planningHeaderHeight = $0 }
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            RouteMapView(snapshot: snapshot, planState: planState, selectedStopID: $selectedStopID, bottomInset: 0)
+                                .frame(height: mapHeight)
+                                .clipped()
+                                .allowsHitTesting(mapHeight > 1)
+                                .accessibilityHidden(mapHeight <= 1)
+                        }
+                        VStack(spacing: 0) {
+                            if !dynamicTypeSize.isAccessibilitySize {
+                                planningPanelHandle(restingHeight: restingHeight, collapsedHeight: collapsedHeight, expandedHeight: availableHeight)
+                            }
+                            PlanPanel(snapshot: snapshot, planState: planState, selectedStopID: $selectedStopID, sheet: $sheet, listMode: $listMode, keptOrder: keptRoute == snapshot.route.id && keptRevision == snapshot.route.inputRevision, scan: { scanner = true }, startDelivering: requestStart)
+                        }
+                        .background(Theme.panel)
+                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22))
+                        .toasts(toasts)
+                        .frame(height: panelHeight)
                     }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("workspaceMode")
-                    SyncStatusIndicator()
-                        .frame(minWidth: Theme.minTouch, minHeight: Theme.minTouch)
+                    .background(Theme.panel)
+                    .coordinateSpace(name: "planningWorkspace")
+                    .animation(reduceMotion ? nil : .spring(duration: 0.32, bounce: 0.08), value: listMode)
                 }
-                .padding(.horizontal, Theme.Space.l)
-                switch effectiveMode {
-                case .plan:
-                    PlanPanel(snapshot: snapshot, planState: planState, selectedStopID: $selectedStopID, sheet: $sheet, selectTab: selectTab)
-                case .deliver:
-                    DeliveryPanel(snapshot: snapshot, planState: planState, sheet: $sheet, selectedStopID: $selectedStopID)
-                }
+            case .deliver:
+                DeliveryPanel(snapshot: snapshot, planState: planState, sheet: $sheet, selectedStopID: $selectedStopID, backToPlanning: { mode = .plan }, startRoute: requestStart)
             }
         }
-        .navigationTitle(snapshot.route.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbar }
-        .sheet(item: $sheet) { item in sheetContent(item) }
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar(.hidden, for: .navigationBar)
+        .accessibilityHidden(sheet != nil || scanner || finishFromStops)
+        .sheet(item: $sheet) { item in
+            switch item {
+            case .stops, .stop, .work: sheetContent(item)
+            default: sheetContent(item).toasts(toasts)
+            }
+        }
+        .fullScreenCover(isPresented: $scanner) {
+            NavigationStack {
+                ScanScreen(snapshot: snapshot, selectTab: selectTab)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { scanner = false } } }
+            }
+        }
+        .sheet(isPresented: $finishFromStops) {
+            ExecutionFinishSheet(snapshot: snapshot) {
+                guard services.store.finish(snapshot, confirmOutstandingWork: true).isCommitted else { return false }
+                toasts.show("Route finished. Find it in History.", symbol: "flag.checkered", tone: .success)
+                return true
+            }
+        }
+        .confirmationDialog("Start with your current stop order?", isPresented: $confirmCurrentOrderStart, titleVisibility: .visible) {
+            Button("Use current order and start") { commitStart(useCurrentOrder: true) }
+                .accessibilityIdentifier("confirmStartCurrentOrder")
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("No current optimized order has been accepted. Your stop order will be used. Starting records your decision to run this route.")
+        }
         .alert("Rename route", isPresented: $renaming) {
             TextField("Name", text: $newName)
             Button("Save") { if !newName.trimmingCharacters(in: .whitespaces).isEmpty { services.store.rename(snapshot.route, to: newName) } }
@@ -85,64 +132,137 @@ struct RouteWorkspaceView: View {
         .onAppear {
             if tracker == nil { tracker = PlanTracker(optimizer: services.optimizer) }
             tracker?.track(snapshot.route)
-            if dynamicTypeSize.isAccessibilitySize { detent = .expanded }
+            if dynamicTypeSize.isAccessibilitySize { listMode = true }
             Task { await services.verifier.verifyPendingStops(in: snapshot, store: services.store) }
         }
-        .onChange(of: effectiveMode) { _, newMode in
-            if newMode == .deliver && detent == .collapsed { detent = .medium }
-        }
-        .onChange(of: dynamicTypeSize) { _, size in
-            if size.isAccessibilitySize { detent = .expanded }
-        }
         .onChange(of: snapshot.route.appliedRequestID) { _, _ in tracker?.track(snapshot.route) }
-        .onChange(of: selectedStopID) { _, id in if id != nil, detent == .collapsed { detent = .medium } }
     }
 
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button { services.store.currentRouteID = nil } label: { Label("Routes", systemImage: "list.bullet") }
-                .accessibilityIdentifier("allRoutes")
+    private func planningPanelHandle(restingHeight: CGFloat, collapsedHeight: CGFloat, expandedHeight: CGFloat) -> some View {
+        Button { settlePlanningPanel(expanded: !listMode) } label: {
+            Capsule()
+                .fill(Theme.neutral.opacity(0.45))
+                .frame(width: 40, height: 5)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .contentShape(Rectangle())
         }
-        ToolbarItem(placement: .principal) {
-            VStack(spacing: 0) {
-                Text(snapshot.route.name).font(.headline).lineLimit(1)
-                HStack(spacing: 4) {
-                    if services.mode.isDemo { Image(systemName: "theatermasks.fill").foregroundStyle(Theme.demo) }
-                    Text((services.mode.isDemo ? "Demo · " : "") + "\(snapshot.stops.count) stops · \(snapshot.route.status.label)")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("planningPanelHandle")
+        .accessibilityLabel("Stops list")
+        .accessibilityValue(listMode ? "Expanded" : "Collapsed")
+        .accessibilityHint("Swipe up to show the full list, or down to show the map. Double tap to switch.")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: settlePlanningPanel(expanded: true)
+            case .decrement: settlePlanningPanel(expanded: false)
+            @unknown default: break
             }
-            .accessibilityElement(children: .combine)
         }
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button { sheet = .finder } label: { Label("Find package", systemImage: "shippingbox.and.arrow.backward") }
-                .accessibilityIdentifier("findPackage")
-            Menu {
-                Button("Route settings", systemImage: "slider.horizontal.3") { sheet = .settings }
-                Button("Rename", systemImage: "pencil") { newName = snapshot.route.name; renaming = true }
-                Button("Duplicate", systemImage: "plus.square.on.square") {
-                    Task { do { _ = try await services.store.duplicate(snapshot.route) } catch { self.error = error.localizedDescription } }
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 8, coordinateSpace: .named("planningWorkspace"))
+                .updating($panelDragOffset) { value, offset, _ in offset = value.translation.height }
+                .onEnded { value in
+                    let projectedOffset = value.predictedEndTranslation.height
+                    let expanded: Bool
+                    if value.translation.height < -44 || projectedOffset < -80 {
+                        expanded = true
+                    } else if value.translation.height > 44 || projectedOffset > 80 {
+                        expanded = false
+                    } else {
+                        expanded = restingHeight - value.translation.height > (collapsedHeight + expandedHeight) / 2
+                    }
+                    settlePlanningPanel(expanded: expanded)
                 }
-                Button("Archive", systemImage: "archivebox") { services.store.archive(snapshot.route) }
-            } label: {
-                Label("Route options", systemImage: "ellipsis.circle")
-            }
-            .accessibilityIdentifier("routeMenu")
+        )
+    }
+
+    private func settlePlanningPanel(expanded: Bool) {
+        withAnimation(reduceMotion ? nil : .spring(duration: 0.32, bounce: 0.08)) {
+            listMode = expanded
         }
+    }
+
+    private var planningHeader: some View {
+        VStack(spacing: 0) {
+        HStack(spacing: 8) {
+            Button { services.store.currentRouteID = nil } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
+                .accessibilityLabel("All routes").accessibilityIdentifier("allRoutes")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(snapshot.route.name).font(.system(.headline, design: .rounded, weight: .bold)).lineLimit(1)
+                Text((services.mode.isDemo ? "Demo · " : "") + "Planning · \(snapshot.stops.count) stops · \(snapshot.packages.count) packages" + (services.connectivity.isOnline ? "" : " · Offline"))
+                    .font(.subheadline).foregroundStyle(Theme.neutral).fixedSize(horizontal: false, vertical: true)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Button { sheet = .finder } label: { Label("Find", systemImage: "magnifyingglass").lineLimit(1) }
+                .buttonStyle(SecondaryButtonStyle()).accessibilityIdentifier("findPackage")
+            routeMenu
+        }
+        .padding(.trailing, 8).padding(.vertical, 8)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .background(Theme.panel)
+            ExecutionControls(snapshot: snapshot, showStartAction: false, start: requestStart)
+                .padding(.horizontal, 16)
+        }
+    }
+
+    private var routeMenu: some View {
+        Menu {
+            Button("Route settings", systemImage: "slider.horizontal.3") { sheet = .settings }
+            Button("Rename", systemImage: "pencil") { newName = snapshot.route.name; renaming = true }
+            Button("Duplicate", systemImage: "plus.square.on.square") {
+                Task { do { _ = try await services.store.duplicate(snapshot.route) } catch { self.error = error.localizedDescription } }
+            }
+            Button("Archive", systemImage: "archivebox") { services.store.archive(snapshot.route) }
+            if execution?.state == .active {
+                Button("Pause route", systemImage: "pause.circle") { services.store.pauseExecution(snapshot) }
+            } else if execution?.state == .paused {
+                Button("Resume route", systemImage: "play.circle") {
+                    if services.store.resumeExecution(snapshot).isCommitted { mode = .deliver }
+                }
+            } else {
+                Button("Start route", systemImage: "steeringwheel", action: requestStart).accessibilityIdentifier("startDelivering")
+            }
+            if execution?.state == .active || execution?.state == .paused {
+                Button("Finish route…", systemImage: "flag.checkered") { finishFromStops = true }
+            }
+            Button("Back to planning", systemImage: "pencil") { mode = .plan }.accessibilityIdentifier("backToPlanning")
+            if snapshot.route.appliedRequestID != nil { Button("Re-optimize") { sheet = .optimize } }
+        } label: {
+            Image(systemName: "ellipsis").frame(width: 44, height: 44).background(Theme.fill, in: Circle())
+        }
+        .accessibilityLabel("Route options").accessibilityIdentifier("routeMenu")
+    }
+
+    private func requestStart() {
+        if execution?.state == .paused {
+            if services.store.resumeExecution(snapshot).isCommitted { mode = .deliver }
+            return
+        }
+        if execution?.state == .active { mode = .deliver; return }
+        let acceptedProposal = snapshot.route.appliedRequestID != nil && snapshot.route.appliedRevision == snapshot.route.inputRevision
+        let explicitlyKeptOrder = keptRoute == snapshot.route.id && keptRevision == snapshot.route.inputRevision
+        if acceptedProposal || explicitlyKeptOrder { commitStart(useCurrentOrder: explicitlyKeptOrder && !acceptedProposal) }
+        else { confirmCurrentOrderStart = true }
+    }
+
+    private func commitStart(useCurrentOrder: Bool) {
+        guard services.store.startExecution(snapshot, useCurrentOrder: useCurrentOrder).isCommitted else { return }
+        mode = .deliver
     }
 
     @ViewBuilder private func sheetContent(_ item: WorkspaceSheet) -> some View {
         switch item {
         case .addStops: AddStopsMenu(snapshot: snapshot, sheet: $sheet, selectTab: selectTab).presentationDetents([.medium, .large])
-        case .optimize: OptimizeSheet(snapshot: snapshot, defaultOrigin: effectiveMode == .deliver ? .currentLocation : .routeStart)
+        case .optimize: OptimizeSheet(snapshot: snapshot, defaultOrigin: effectiveMode == .deliver ? .currentLocation : .routeStart, keepOrder: { keptRoute = snapshot.route.id; keptRevision = snapshot.route.inputRevision })
         case let .stop(id): StopDetailView(stopID: id)
+        case let .work(id): StopWorkView(routeID: snapshot.route.id, stopID: id)
         case .settings: RouteEditorView(route: snapshot.route)
         case .finder: PackageFinderView(snapshot: snapshot) { stopID in selectedStopID = stopID; sheet = .stop(stopID) }
         case .reviewQueue: ReviewQueueView(routeID: snapshot.route.id)
         case .manualAdd: ManualAddView(routeID: snapshot.route.id)
         case .paste: PasteImportView(routeID: snapshot.route.id)
         case .csv: CSVImportView(routeID: snapshot.route.id)
+        case .stops: StopsSheet(snapshot: snapshot, detail: { sheet = .stop($0) }, replan: { sheet = .optimize }, finish: { sheet = nil; finishFromStops = true }, backToPlanning: { mode = .plan; sheet = nil })
         }
     }
 }
@@ -154,116 +274,155 @@ struct PlanPanel: View {
     let planState: PlanTracker.PlanState
     @Binding var selectedStopID: StopID?
     @Binding var sheet: WorkspaceSheet?
-    var selectTab: (AppTab) -> Void
+    @Binding var listMode: Bool
+    var keptOrder: Bool
+    var scan: () -> Void
+    var startDelivering: () -> Void
     @Environment(AppServices.self) private var services
     @Environment(ToastCenter.self) private var toasts
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var editMode: EditMode = .inactive
-
-    @ViewBuilder private var addButtons: some View {
-        Button { sheet = .addStops } label: { Label("Add stops", systemImage: "plus").labelStyle(.titleAndIcon).lineLimit(1) }
-            .buttonStyle(SecondaryButtonStyle())
-            .fixedSize()
-            .accessibilityIdentifier("addStops")
-        Button { selectTab(.scan) } label: { Label("Scan", systemImage: "barcode.viewfinder").labelStyle(.titleAndIcon).lineLimit(1) }
-            .buttonStyle(SecondaryButtonStyle())
-            .fixedSize()
-    }
-
-    @ViewBuilder private func reorderButton(hasStops: Bool) -> some View {
-        if hasStops {
-            Button(editMode.isEditing ? "Done" : "Reorder") { withAnimation { editMode = editMode.isEditing ? .inactive : .active } }
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .fixedSize()
-                .frame(minHeight: Theme.minTouch)
-                .accessibilityIdentifier("reorder")
-        }
-    }
+    private var ready: Bool { if case .current = planState { true } else { keptOrder } }
 
     var body: some View {
-        let ordered = snapshot.orderedStops
-        let ledger = snapshot.ledger
-        let visitByStop: [StopID: PlannedVisit] = {
-            if case let .current(p) = planState { return Dictionary(uniqueKeysWithValues: p.visits.map { ($0.stopID, $0) }) }
-            return [:]
-        }()
-        ScrollViewReader { proxy in
-            List {
-                Section {
-                    PlanSummaryCard(snapshot: snapshot, planState: planState) { sheet = .optimize }
-                    PlanWarnings(snapshot: snapshot, sheet: $sheet)
-                }
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                Section {
-                    // One row when it fits; otherwise wrap rather than truncate button titles.
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: Theme.Space.s) {
-                            addButtons
-                            Spacer()
-                            reorderButton(hasStops: !ordered.isEmpty)
+        VStack(spacing: 0) {
+            if listMode || typeSize.isAccessibilitySize {
+                PlanSummaryCard(snapshot: snapshot, planState: planState) { sheet = .optimize }.dynamicTypeSize(...DynamicTypeSize.xxxLarge).padding(16)
+            }
+            if !listMode && !typeSize.isAccessibilitySize, case let .current(proposal) = planState {
+                ProvenanceText(text: proposal.provider == .demo ? "Straight-line demo estimate · not road travel times" : "Road travel estimate · not a guarantee").padding(.horizontal, 16)
+            }
+            ReviewAlertRow(snapshot: snapshot, sheet: $sheet).dynamicTypeSize(...DynamicTypeSize.xxxLarge).padding(.horizontal, 16)
+            ViewThatFits(in: .horizontal) {
+                HStack { sectionTitle; Spacer(); listControls }
+                VStack(alignment: .leading, spacing: 0) { sectionTitle; HStack { listControls } }
+            }
+            .padding(.horizontal, 16)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            ScrollViewReader { proxy in
+                List {
+                    if snapshot.route.start == nil {
+                        Banner(symbol: "mappin.slash", text: "Set a start, or optimize from your location.", tone: .warning, actionTitle: "Set start") { sheet = .settings }
+                    }
+                    if !snapshot.orphanPackages.isEmpty {
+                        Banner(symbol: "questionmark.square.dashed", text: "\(snapshot.orphanPackages.count) packages need reassignment.", tone: .warning, actionTitle: "Find") { sheet = .finder }
+                    }
+                    if snapshot.stops.isEmpty {
+                        StateMessageView(symbol: "shippingbox", title: "No stops yet", message: "Scan labels or add an address to begin.")
+                    }
+                    ForEach(Array(snapshot.orderedStops.enumerated()), id: \.element.id) { index, stop in
+                        Button { sheet = .stop(stop.id) } label: {
+                            StopRow(number: index + 1, stop: stop, packages: snapshot.packages(for: stop.id), status: snapshot.ledger.stopStatus(stop, packages: snapshot.packages), visit: visit(stop.id), timeZone: snapshot.route.timeZone, sync: services.store.syncState(forKey: "routes/\(snapshot.route.id)/stops/\(stop.id)"), selected: selectedStopID == stop.id, badge: .make(stop: stop, snapshot: snapshot), workCount: snapshot.tasks.filter { $0.stopID == stop.id }.count)
                         }
-                        VStack(alignment: .leading, spacing: Theme.Space.s) {
-                            HStack(spacing: Theme.Space.s) { addButtons }
-                            reorderButton(hasStops: !ordered.isEmpty)
+                        .buttonStyle(.row).id(stop.id)
+                        .accessibilityIdentifier("stopRow.\(index + 1)")
+                        .listRowBackground(selectedStopID == stop.id ? Theme.brandSoft : Theme.panel)
+                        .swipeActions(edge: .trailing) {
+                            Button("Remove", role: .destructive) {
+                                guard services.store.delete(stop: stop, from: snapshot).isCommitted else { return }
+                                toasts.show("Stop removed", symbol: "trash", tone: .neutral, undoAcknowledged: { services.store.restore(stop: stop, packages: snapshot.packages(for: stop.id), tasks: snapshot.tasks.filter { $0.stopID == stop.id }, in: snapshot.route.id).isCommitted })
+                            }
                         }
-                        VStack(alignment: .leading, spacing: Theme.Space.s) {
-                            addButtons
-                            reorderButton(hasStops: !ordered.isEmpty)
+                        .swipeActions(edge: .leading) {
+                            Button("Deliver next") {
+                                guard services.store.setNextStop(stop.id, in: snapshot.route).isCommitted else { return }
+                                toasts.show("Set as next stop", symbol: "arrow.right.circle", tone: .info)
+                            }
                         }
+                    }
+                    .onMove { from, to in
+                        var ids = snapshot.orderedStops.map(\.id); ids.move(fromOffsets: from, toOffset: to)
+                        guard services.store.reorder(ids, in: snapshot).isCommitted else { return }
+                        Haptics.selection()
                     }
                 }
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-
-                if ordered.isEmpty {
-                    Section {
-                        StateMessageView(symbol: "shippingbox", title: "No stops yet", message: "Scan package labels, search for an address, paste a list or import a CSV.", actions: [
-                            .init(title: "Scan labels", symbol: "barcode.viewfinder") { selectTab(.scan) },
-                            .init(title: "Add stops another way", symbol: "plus") { sheet = .addStops },
-                        ])
-                        .frame(maxWidth: .infinity)
-                    }
-                    .listRowBackground(Color.clear)
-                } else {
-                    Section("\(ordered.count) stops · \(snapshot.packages.count) packages") {
-                        ForEach(Array(ordered.enumerated()), id: \.element.id) { index, stop in
-                            Button { sheet = .stop(stop.id) } label: {
-                                StopRow(number: index + 1, stop: stop, packages: snapshot.packages(for: stop.id), status: ledger.stopStatus(stop, packages: snapshot.packages), visit: visitByStop[stop.id], timeZone: snapshot.route.timeZone, sync: services.store.syncState(forKey: "routes/\(snapshot.route.id)/stops/\(stop.id)"), selected: selectedStopID == stop.id)
-                            }
-                            .buttonStyle(.row)
-                            .id(stop.id)
-                            .listRowBackground(selectedStopID == stop.id ? Theme.brandSoft : nil)
-                            .accessibilityIdentifier("stopRow.\(index + 1)")
-                            .swipeActions(edge: .trailing) {
-                                Button("Remove", role: .destructive) {
-                                    services.store.delete(stop: stop, from: snapshot)
-                                    toasts.show("Stop removed", symbol: "trash", tone: .neutral, undo: {
-                                        services.store.restore(stop: stop, packages: snapshot.packages(for: stop.id), in: snapshot.route.id)
-                                    })
-                                }
-                            }
-                            .swipeActions(edge: .leading) {
-                                Button("Deliver next") {
-                                    services.store.setNextStop(stop.id, in: snapshot.route)
-                                    toasts.show("Set as next stop", symbol: "arrow.right.circle", tone: .info)
-                                }.tint(Theme.teal)
-                            }
-                        }
-                        .onMove { from, to in
-                            var ids = ordered.map(\.id)
-                            ids.move(fromOffsets: from, toOffset: to)
-                            services.store.reorder(ids, in: snapshot)
-                            Haptics.selection()
-                        }
-                    }
+                .listStyle(.plain).scrollContentBackground(.hidden)
+                .environment(\.editMode, $editMode)
+                .onChange(of: selectedStopID) { _, id in
+                    if let id { if reduceMotion { proxy.scrollTo(id, anchor: .center) } else { withAnimation { proxy.scrollTo(id, anchor: .center) } } }
                 }
             }
-            .listStyle(.insetGrouped)
-            .listSectionSpacing(Theme.Space.s)
-            .contentMargins(.top, 0, for: .scrollContent)
-            .environment(\.editMode, $editMode)
-            .onChange(of: selectedStopID) { _, id in if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } } }
+            VStack(spacing: 4) {
+                if !ready && !snapshot.stops.isEmpty {
+                    Button("Optimize…") { sheet = .optimize }
+                        .frame(minHeight: 44).disabled(!services.connectivity.isOnline).accessibilityIdentifier("optimize")
+                }
+                if typeSize.isAccessibilitySize {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) { scanButton; addButton }
+                        primaryButton
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { footerButtons }
+                        VStack(spacing: 8) { footerButtons }
+                    }
+                }
+                if !ready && !snapshot.stops.isEmpty && !services.connectivity.isOnline {
+                    Text("Optimizing needs a connection").font(.footnote).foregroundStyle(Theme.warning)
+                }
+            }
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .padding(.horizontal, 16).padding(.vertical, 8).background(Theme.panel)
+        }
+        .background(Theme.panel)
+    }
+    private var sectionTitle: some View { Text("STOPS · YOUR ORDER").font(.footnote.bold()).tracking(0.4).foregroundStyle(Theme.neutral) }
+    private var listControls: some View {
+        Group {
+            Button(editMode.isEditing ? "Done" : "Edit order") { editMode = editMode.isEditing ? .inactive : .active; if editMode.isEditing { listMode = true } }
+                .font(.subheadline.weight(.semibold)).lineLimit(1).fixedSize().frame(minHeight: 44).accessibilityIdentifier("reorder")
+            Button { listMode.toggle() } label: { Label(listMode ? "Map" : "Full list", systemImage: listMode ? "map" : "list.bullet").lineLimit(1).fixedSize() }
+                .font(.subheadline.weight(.semibold)).frame(minHeight: 44).accessibilityIdentifier("planListToggle")
+        }
+    }
+    private var scanButton: some View {
+        Button(action: scan) { Label("Scan", systemImage: "barcode.viewfinder").lineLimit(1).fixedSize() }.buttonStyle(SecondaryButtonStyle()).accessibilityIdentifier("scanRoute")
+    }
+    private var addButton: some View {
+        Button { sheet = .addStops } label: { Label("Add", systemImage: "plus").lineLimit(1).fixedSize() }.buttonStyle(SecondaryButtonStyle()).accessibilityIdentifier("addStops")
+    }
+    @ViewBuilder private var footerButtons: some View { scanButton; addButton; primaryButton }
+    @ViewBuilder private var primaryButton: some View {
+        if snapshot.stops.isEmpty {
+            Button("Add stops") { sheet = .addStops }.buttonStyle(PrimaryButtonStyle())
+        } else {
+            if let session = services.store.executionSession, session.routeID != snapshot.route.id,
+               session.state == .active || session.state == .paused {
+                Button("Return to \(session.state == .paused ? "paused" : "running") route") { services.store.returnToExecutionRoute() }
+                    .buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("returnToExecutionRoute")
+            } else {
+                let state = services.store.executionSession(for: snapshot.route.id)?.state
+                Button(state == .paused ? "Resume route" : state == .active ? "Continue route" : "Start route", action: startDelivering)
+                    .buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier(state == .paused ? "resumeExecution" : "startDelivering")
+            }
+        }
+    }
+    private func visit(_ id: StopID) -> PlannedVisit? { if case let .current(p) = planState { p.visits.first { $0.stopID == id } } else { nil } }
+}
+
+struct ReviewAlertRow: View {
+    var snapshot: RouteSnapshot
+    @Binding var sheet: WorkspaceSheet?
+    @Environment(AppServices.self) private var services
+    var body: some View {
+        let stops = snapshot.orderedStops.filter { [.needsReview, .unresolvable, .pendingVerification].contains($0.addressStatus) }
+        let drafts = services.drafts.drafts(for: snapshot.route.id)
+        let count = stops.count + drafts.count
+        if count > 0 {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.warning)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(count > 1 ? "\(count) addresses need review" : stops.first?.address.streetLine ?? "Scanned label needs review").font(.headline).fixedSize(horizontal: false, vertical: true)
+                    Text(stops.first?.reviewReasons.first?.explanation ?? stops.first?.addressStatus.label ?? "Open the review queue").font(.subheadline).foregroundStyle(Theme.warning).lineLimit(1)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Button("Review") { if !drafts.isEmpty { sheet = .reviewQueue } else if let first = stops.first { sheet = .stop(first.id) } }
+                    .buttonStyle(ActionButtonStyle(tint: Theme.onBrand, fill: Theme.warning)).frame(width: 96)
+            }
+            .padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.warning, lineWidth: 1))
+            .accessibilityIdentifier("reviewQueueBanner")
         }
     }
 }
@@ -277,23 +436,32 @@ struct StopRow: View {
     var timeZone: TimeZone
     var sync: DocumentSyncState
     var selected: Bool
+    var badge: StopBadgeState? = nil
+    var workCount = 0
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         HStack(alignment: .top, spacing: Theme.Space.m) {
-            StopNumberView(number: number, status: status)
+            StopBadge(number: number, state: badge ?? (status == .completed ? .delivered : status == .partial ? .partial : status == .skipped ? .skipped : .pending))
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                let addressLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+                addressLayout {
                     Text(stop.address.streetLine ?? stop.address.singleLine)
                         .font(.addressCompact)
                         .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let unit = stop.address.unitLabel { UnitBadge(label: unit) }
+                    if let unit = stop.address.unitLabel { Text(unit).font(.subheadline).foregroundStyle(Theme.neutral) }
                 }
                 Text([stop.address.municipality, stop.address.postalCode].compactMap { $0 }.joined(separator: " "))
-                    .font(.subheadline).foregroundStyle(.secondary)
+                    .font(.subheadline).foregroundStyle(Theme.neutral)
                 FlowRow {
                     StatusBadge(text: "\(packages.count) pkg", symbol: "shippingbox", tone: .neutral, compact: true)
-                    if status != .pending { StatusBadge(text: status.label, symbol: status.symbol, tone: status.tone, compact: true) }
+                    if workCount > 0 { StatusBadge(text: "\(workCount) pickup/checklist", symbol: "checklist", tone: .neutral, compact: true) }
+                    if status != .pending {
+                        StatusBadge(text: workStatusLabel,
+                            symbol: badge?.symbol ?? status.symbol,
+                            tone: badge == .failed ? .danger : status == .completed && badge != .delivered ? .neutral : status.tone, compact: true)
+                    }
                     if stop.addressStatus != .verified { StatusBadge(text: stop.addressStatus.label, symbol: stop.addressStatus.symbol, tone: stop.addressStatus.tone, compact: true) }
                     if let w = stop.timeWindow { StatusBadge(text: w.kind == .hard ? "\(WallClock.label(w.startMinute ?? 0))–\(WallClock.label(w.endMinute))" : "By \(WallClock.label(w.endMinute))", symbol: w.kind == .hard ? "clock.badge.exclamationmark" : "clock", tone: .info, compact: true) }
                     if stop.pin != .none { StatusBadge(text: stop.pin == .first ? "First" : "Last", symbol: "pin.fill", tone: .info, compact: true) }
@@ -304,6 +472,7 @@ struct StopRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
@@ -313,10 +482,21 @@ struct StopRow: View {
         var parts = ["Stop \(number)", stop.address.streetLine ?? stop.address.singleLine]
         if let unit = stop.address.unitLabel { parts.append(unit) }
         parts.append("\(packages.count) package\(packages.count == 1 ? "" : "s")")
-        parts.append(status.label)
+        if workCount > 0 { parts.append("\(workCount) pickup/checklist items") }
+        parts.append(workStatusLabel)
         if stop.addressStatus != .verified { parts.append(stop.addressStatus.label) }
+        if let window = stop.timeWindow { parts.append(window.explanation) }
         if let visit { parts.append("estimated arrival \(DisplayFormat.time(visit.arrival, timeZone: timeZone))") }
         return parts.joined(separator: ", ")
+    }
+
+    private var workStatusLabel: String {
+        if badge == .failed { return "Failed — unsuccessful" }
+        if badge == .excluded { return "Excluded" }
+        if status == .completed { return "Required work handled" }
+        if status == .skipped { return "Deferred — unfinished" }
+        if status == .empty, workCount > 0 { return "Optional work" }
+        return status.label
     }
 }
 
@@ -356,68 +536,29 @@ struct PlanSummaryCard: View {
     let planState: PlanTracker.PlanState
     var optimize: () -> Void
     @Environment(AppServices.self) private var services
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
     var body: some View {
-        // At accessibility text sizes the Optimize button goes below the status so neither wraps mid-word.
-        let layout = dynamicTypeSize.isAccessibilitySize || planStateIsCurrent ? AnyLayout(VStackLayout(alignment: .leading, spacing: Theme.Space.m)) : AnyLayout(HStackLayout(alignment: .center, spacing: Theme.Space.m))
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            layout {
-                VStack(alignment: .leading, spacing: 2) {
-                    switch planState {
-                    case let .current(p):
-                        if let m = p.metrics {
-                            ViewThatFits(in: .horizontal) {
-                              HStack(spacing: Theme.Space.l) {
-                                Metric(title: "Duration", value: DisplayFormat.duration(seconds: m.totalSeconds))
-                                Metric(title: "Distance", value: DisplayFormat.distance(meters: m.travelMeters, unit: services.settings.settings.distanceUnit))
-                                Metric(title: "Finish", value: DisplayFormat.time(m.routeEnd, timeZone: snapshot.route.timeZone))
-                              }
-                              VStack(alignment: .leading, spacing: Theme.Space.s) {
-                                Metric(title: "Duration", value: DisplayFormat.duration(seconds: m.totalSeconds))
-                                Metric(title: "Distance", value: DisplayFormat.distance(meters: m.travelMeters, unit: services.settings.settings.distanceUnit))
-                                Metric(title: "Finish", value: DisplayFormat.time(m.routeEnd, timeZone: snapshot.route.timeZone))
-                              }
-                            }
-                        }
-                    case .outdated:
-                        Label("Times outdated", systemImage: "clock.badge.exclamationmark").font(.headline).foregroundStyle(Theme.warning)
-                    case .none:
-                        Label("Not optimized", systemImage: "point.topleft.down.to.point.bottomright.curvepath").font(.headline)
-                        Text("Your stop order.").font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            switch planState {
+            case .none:
+                Text("Not optimized").font(.headline)
+                Text("Your order · No travel estimate calculated").font(.subheadline).foregroundStyle(Theme.neutral)
+            case let .outdated(reason):
+                Text("Order changed since optimizing — times outdated").font(.headline).foregroundStyle(Theme.warning)
+                Text(reason).font(.footnote).foregroundStyle(Theme.neutral)
+                Button("Re-optimize", action: optimize).frame(minHeight: 44)
+            case let .current(proposal):
+                Text("Optimized").font(.headline)
+                if let metrics = proposal.metrics {
+                    FlowRow(spacing: 12) {
+                        Metric(title: "Duration", value: DisplayFormat.duration(seconds: metrics.totalSeconds))
+                        Metric(title: "Distance", value: DisplayFormat.distance(meters: metrics.travelMeters, unit: services.settings.settings.distanceUnit))
+                        Metric(title: "Finish", value: DisplayFormat.time(metrics.routeEnd, timeZone: snapshot.route.timeZone))
                     }
                 }
-                if !dynamicTypeSize.isAccessibilitySize && !planStateIsCurrent { Spacer(minLength: 0) }
-                Button(action: optimize) {
-                    Label(planStateIsCurrent ? "Re-optimize" : "Optimize", systemImage: "wand.and.stars")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, Theme.Space.m)
-                        .frame(minHeight: Theme.minTouch)
-                        .foregroundStyle(.white)
-                        .background(Theme.brand, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(snapshot.stops.isEmpty)
-                .opacity(snapshot.stops.isEmpty ? 0.5 : 1)
-                .accessibilityIdentifier("optimize")
+                ProvenanceText(text: proposal.provider == .demo ? "Straight-line demo estimate · not road travel times · calculated \(DisplayFormat.time(proposal.calculatedAt, timeZone: snapshot.route.timeZone))" : "\(proposal.provider.displayName) · \(proposal.trafficLabel) · calculated \(DisplayFormat.time(proposal.calculatedAt, timeZone: snapshot.route.timeZone)) · not a guarantee")
             }
-            switch planState {
-            case let .current(p):
-                ProvenanceText(text: p.provider == .demo
-                    ? "Demo estimate · not road travel times. Calculated \(DisplayFormat.dateTime(p.calculatedAt, timeZone: snapshot.route.timeZone))."
-                    : "\(p.provider.displayName). \(p.trafficLabel). Calculated \(DisplayFormat.dateTime(p.calculatedAt, timeZone: snapshot.route.timeZone)).")
-                if !p.unassigned.isEmpty {
-                    Banner(symbol: "exclamationmark.triangle.fill", text: "\(p.unassigned.count) stop\(p.unassigned.count == 1 ? "" : "s") couldn't be scheduled. Optimize again to see why.", tone: .danger)
-                }
-            case let .outdated(reason):
-                Text(reason).font(.caption).foregroundStyle(.secondary)
-            case .none:
-                EmptyView()
-            }
-        }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
-
-    private var planStateIsCurrent: Bool { if case .current = planState { return true }; return false }
 }
 
 struct Metric: View {
@@ -425,40 +566,9 @@ struct Metric: View {
     var value: String
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(title).font(.caption).foregroundStyle(Theme.neutral)
             Text(value).font(.metric)
         }
         .accessibilityElement(children: .combine)
-    }
-}
-
-struct PlanWarnings: View {
-    let snapshot: RouteSnapshot
-    @Binding var sheet: WorkspaceSheet?
-    @Environment(AppServices.self) private var services
-
-    var body: some View {
-        let needsReview = snapshot.stops.filter { [.needsReview, .unresolvable].contains($0.addressStatus) }
-        let pending = snapshot.stops.filter { $0.addressStatus == .pendingVerification }
-        let drafts = services.drafts.drafts(for: snapshot.route.id)
-        let orphans = snapshot.orphanPackages
-        VStack(spacing: Theme.Space.s) {
-            if snapshot.route.start == nil {
-                Banner(symbol: "mappin.slash", text: "Add a start location (or plan from your current location) before optimizing.", tone: .warning, actionTitle: "Set start") { sheet = .settings }
-            }
-            if !drafts.isEmpty {
-                Banner(symbol: "tray.full", text: "\(drafts.count) scanned label\(drafts.count == 1 ? "" : "s") waiting for review.", tone: .warning, actionTitle: "Review") { sheet = .reviewQueue }
-                    .accessibilityIdentifier("reviewQueueBanner")
-            }
-            if !needsReview.isEmpty {
-                Banner(symbol: "exclamationmark.triangle", text: needsReview.count == 1 ? "1 address needs review." : "\(needsReview.count) addresses need review.", tone: .warning, actionTitle: "Review") { sheet = .stop(needsReview[0].id) }
-            }
-            if !pending.isEmpty {
-                Banner(symbol: "icloud.slash", text: pending.count == 1 ? "1 stop needs address verification. It will be checked when you're online and isn't included in optimization yet." : "\(pending.count) stops need address verification. They'll be checked when you're online and aren't included in optimization yet.", tone: .warning)
-            }
-            if !orphans.isEmpty {
-                Banner(symbol: "questionmark.square.dashed", text: "\(orphans.count) package\(orphans.count == 1 ? "" : "s") belong to a stop that was removed on another device. Open Find package to reassign or remove them.", tone: .warning, actionTitle: "Find") { sheet = .finder }
-            }
-        }
     }
 }
