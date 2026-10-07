@@ -8,6 +8,25 @@ import Testing
 @MainActor
 @Suite("Route store (on-device backend)", .serialized)
 struct RouteStoreTests {
+    @Test("Arrival limit persists, bumps the planning revision, copies, and can be removed")
+    func latestArrival() async throws {
+        let env = TestEnvironment()
+        var route = env.makeRoute()
+        let revision = route.inputRevision
+        route.latestArrivalMinute = 1020
+        env.store.updateSettings(route)
+        #expect(env.snapshot.route.inputRevision == revision + 1)
+        let relaunched = env.relaunch()
+        relaunched.store.currentRouteID = route.id
+        #expect(relaunched.snapshot.route.latestArrivalMinute == 1020)
+        let copy = try await env.store.duplicate(env.snapshot.route)
+        #expect(copy.latestArrivalMinute == 1020)
+        var edited = env.snapshot.route
+        edited.latestArrivalMinute = nil
+        env.store.updateSettings(edited)
+        #expect(env.snapshot.route.latestArrivalMinute == nil)
+        #expect(FirestoreRouteBackend.routeOptionalKeys.contains("latestArrivalMinute"))
+    }
     @Test("E3: same destination → one stop with two packages; other unit → separate stop; repeated tracking → no new package")
     func intakePlacement() {
         let env = TestEnvironment()
@@ -202,6 +221,7 @@ struct ContractTests {
     func timeline() throws {
         var route = Route(name: "T", serviceDate: "2026-11-01", timeZoneID: "America/Toronto", departureMinute: 90)
         route.breakRule = BreakRequirement(earliestStartMinute: 720, latestStartMinute: 780, durationSeconds: 1800)
+        route.latestArrivalMinute = 1500
         var stop = Stop(address: .e1(), addressStatus: .verified, sequence: 1)
         stop.timeWindow = TimeWindowConstraint(kind: .hard, startMinute: 1380, endMinute: 1500)
         let t = try #require(TimelineBuilder.build(RouteSnapshot(route: route, stops: [stop], packages: [], outcomes: [])))
@@ -209,6 +229,7 @@ struct ContractTests {
         #expect(t.windows[stop.id]?.start == "2026-11-02T04:00:00Z")
         #expect(t.windows[stop.id]?.end == "2026-11-02T06:00:00Z") // crosses midnight
         #expect(t.breakWindow?.earliest == "2026-11-01T17:00:00Z")
+        #expect(t.latestArrival == "2026-11-02T06:00:00Z")
         #expect(t.tzdataVersion?.isEmpty == false)
     }
 }
