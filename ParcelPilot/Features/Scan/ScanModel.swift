@@ -86,7 +86,7 @@ final class ScanModel {
         }
 
         phase = .checking
-        statusMessage = "Checking address…"
+        statusMessage = "Checking map…"
         if candidate.alternatives.isEmpty {
             candidate.verification = await services.verifier.verify(candidate.address)
         }
@@ -95,24 +95,33 @@ final class ScanModel {
         dedupe.markProcessed(analysis.fingerprint)
 
         if batchMode {
-            handleBatch(candidate, seenBefore: verdict == .seenEarlierThisSession)
+            if !handleBatch(candidate, seenBefore: verdict == .seenEarlierThisSession) {
+                dedupe.forget(analysis.fingerprint)
+            }
         } else {
             confirmation = CandidateBox(candidate: candidate)
         }
     }
 
-    private func handleBatch(_ candidate: IntakeCandidate, seenBefore: Bool) {
-        guard let snapshot = services.store.current else { return }
+    private func handleBatch(_ candidate: IntakeCandidate, seenBefore: Bool) -> Bool {
+        guard let snapshot = services.store.current else { return false }
         let decision = candidate.decision(allowSynthetic: services.verifier.allowsSynthetic)
         let possibleDuplicate = seenBefore && candidate.trackingIDs.isEmpty
         if decision.autoAcceptable && !possibleDuplicate {
             let (status, resolution, reasons) = candidate.confirmedStop(verifier: services.verifier)
             let result = services.store.addDelivery(to: snapshot, address: candidate.address, status: status, resolution: resolution, reviewReasons: reasons, packages: [candidate.package], source: .scan)
+            guard result.acknowledgement.isCommitted else {
+                statusMessage = services.store.persistenceIssue ?? "This label couldn't be saved on this iPhone. Try again."
+                Haptics.error()
+                return false
+            }
             addedThisSession += 1
             Haptics.success()
-            let where_ = result.placement == .newStop ? "new stop" : "existing stop"
-            toasts.show("Added \(candidate.address.streetLine ?? "stop")\(candidate.address.unitLabel.map { ", \($0)" } ?? "") · \(where_)", symbol: "checkmark.circle.fill", tone: .success, undo: { [services] in
-                if let current = services.store.current { services.store.undoAdd(result, in: current) }
+            let count = snapshot.packages(for: result.stopID).count + result.packageIDs.count
+            let where_ = result.placement == .newStop ? "new stop" : "\(count) packages at this stop"
+            toasts.show("Added \(candidate.address.streetLine ?? "stop")\(candidate.address.unitLabel.map { ", \($0)" } ?? "") · \(where_)", symbol: "checkmark.circle.fill", tone: .success, undoAcknowledged: { [services] in
+                guard let current = services.store.current else { return false }
+                return services.store.undoAdd(result, in: current).isCommitted
             })
         } else {
             var draft = candidate.asDraft(allowSynthetic: services.verifier.allowsSynthetic)
@@ -122,6 +131,7 @@ final class ScanModel {
             let reason = draft.reasons.first?.explanation ?? "Needs review."
             toasts.show("Sent to review: \(reason)", symbol: "tray.and.arrow.down.fill", tone: .warning, seconds: 4)
         }
+        return true
     }
 
     func clearStatus() { statusMessage = nil; hints = [] }

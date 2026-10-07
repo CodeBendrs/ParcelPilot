@@ -45,23 +45,18 @@ struct ScanScreen: View {
                 Color.black
                 cameraArea
                 if let model { overlay(model) }
+                if let toast = toasts.current, model?.confirmation == nil, !showReview, !showManual {
+                    VStack { Spacer(); UndoToast(message: toast.message, symbol: toast.symbol, tone: toast.tone, undo: toasts.undoAction(for: toast), extra: nil).padding(.bottom, 12) }
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.l, style: .continuous))
             .padding(.horizontal, Theme.Space.s)
+            reviewBar
             controls
         }
-        .background(Theme.background)
-        .navigationTitle("Scan")
+        .background(Theme.panel)
+        .navigationTitle("Scan labels")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { showReview = true } label: {
-                    let n = services.drafts.drafts(for: snapshot.route.id).count
-                    Label(n > 0 ? "Review (\(n))" : "Review", systemImage: n > 0 ? "tray.full.fill" : "tray")
-                }
-                .accessibilityIdentifier("reviewQueue")
-            }
-        }
         .onAppear {
             if model == nil { model = ScanModel(services: services, toasts: toasts) }
             visible = true
@@ -90,10 +85,10 @@ struct ScanScreen: View {
             }
         }
         .sheet(item: Binding(get: { model?.confirmation }, set: { model?.confirmation = $0 })) { box in
-            AddressConfirmationView(candidate: box.candidate) { outcome in model?.confirmationFinished(outcome) }
+            AddressConfirmationView(candidate: box.candidate) { outcome in model?.confirmationFinished(outcome) }.toasts(toasts)
         }
-        .sheet(isPresented: $showReview) { ReviewQueueView(routeID: snapshot.route.id) }
-        .sheet(isPresented: $showManual) { ManualAddView(routeID: snapshot.route.id) }
+        .sheet(isPresented: $showReview) { ReviewQueueView(routeID: snapshot.route.id).toasts(toasts) }
+        .sheet(isPresented: $showManual) { ManualAddView(routeID: snapshot.route.id).toasts(toasts) }
         .fullScreenCover(isPresented: $showStillCamera) {
             CameraCaptureView { image in
                 showStillCamera = false
@@ -127,31 +122,50 @@ struct ScanScreen: View {
             }
             if model?.batchMode == true {
                 Text("Batch mode: clear, verified labels are added automatically with Undo. Anything uncertain goes to review — keep scanning.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(Theme.neutral)
             }
         }
         .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.s)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
     private var routeName: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Adding to").font(.caption).foregroundStyle(.secondary)
-            Text(snapshot.route.name).font(.headline).lineLimit(2)
+        Menu {
+            ForEach(services.store.openRoutes) { route in
+                Button(route.name) { services.store.currentRouteID = route.id }
+            }
+        } label: {
+            Label("Adding to \(snapshot.route.name)", systemImage: "chevron.down").font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44).multilineTextAlignment(.leading)
         }
+    }
+
+    private var reviewBar: some View {
+        Button { showReview = true } label: {
+            HStack {
+                Text("\(model?.addedThisSession ?? 0) added").foregroundStyle(Theme.success)
+                let count = services.drafts.drafts(for: snapshot.route.id).count
+                Label("\(count) to review", systemImage: "exclamationmark.triangle").foregroundStyle(Theme.warning)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").foregroundStyle(Theme.neutral)
+            }
+            .font(.subheadline.weight(.semibold)).padding(12).frame(minHeight: 50)
+            .background(Theme.fill, in: RoundedRectangle(cornerRadius: 14))
+        }.padding(16).dynamicTypeSize(...DynamicTypeSize.xxxLarge).accessibilityIdentifier("reviewQueue")
     }
 
     @ViewBuilder private var batchToggle: some View {
         if let model {
-            Toggle(isOn: Binding(get: { model.batchMode }, set: { model.batchMode = $0 })) {
-                Label("Batch", systemImage: "square.stack.3d.down.forward").lineLimit(1)
+            HStack(spacing: 8) {
+                Label("Batch", systemImage: "square.stack.3d.down.forward").font(.subheadline).lineLimit(1)
+                Toggle("Batch", isOn: Binding(get: { model.batchMode }, set: { model.batchMode = $0 }))
+                    .labelsHidden().toggleStyle(.switch).tint(Theme.success)
+                    .accessibilityIdentifier("batchToggle")
+                    .accessibilityHint("Adds clear, verified labels automatically and sends uncertain ones to review")
             }
-            .toggleStyle(.button)
-            .tint(Theme.teal)
-            .fixedSize()
+            .fixedSize(horizontal: true, vertical: false)
             .frame(minHeight: Theme.minTouch)
-            .accessibilityIdentifier("batchToggle")
-            .accessibilityHint("Adds clear, verified labels automatically and sends uncertain ones to review")
         }
     }
 
@@ -232,7 +246,7 @@ struct ScanScreen: View {
                     .padding(.vertical, 60)
                     .accessibilityHidden(true)
                 VStack {
-                    Text(controller.labelInView ? "Address in view" : "Fit the SHIP TO / DESTINATAIRE address inside the frame")
+                    Text(controller.labelInView ? "Address in view · hold still" : "Fit the SHIP TO / DESTINATAIRE address inside the frame")
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 12).padding(.vertical, 6)
                         .background(.ultraThinMaterial, in: Capsule())
@@ -261,7 +275,7 @@ struct ScanScreen: View {
     // MARK: Controls
 
     private var controls: some View {
-        HStack(spacing: Theme.Space.l) {
+        HStack(spacing: Theme.Space.s) {
             PhotosPicker(selection: $photoItem, matching: .images) {
                 Label("Import", systemImage: "photo.on.rectangle").labelStyle(.verticalCompact)
             }
@@ -269,11 +283,12 @@ struct ScanScreen: View {
             .accessibilityLabel("Import a photo of a label")
             .accessibilityIdentifier("importPhoto")
 
-            if controller.hasTorch && cameraStatus == .authorized {
+            Group {
                 Button { controller.setTorch(!controller.torchOn) } label: {
                     Label(controller.torchOn ? "Light on" : "Light", systemImage: controller.torchOn ? "flashlight.on.fill" : "flashlight.off.fill").labelStyle(.verticalCompact)
                 }
                 .frame(minWidth: Theme.minTouch, minHeight: Theme.minTouch)
+                .disabled(!controller.hasTorch || cameraStatus != .authorized)
             }
 
             Spacer()
@@ -281,8 +296,9 @@ struct ScanScreen: View {
                 if ScannerController.isSupported && cameraStatus == .authorized { controller.capture() } else if CameraCaptureView.isAvailable && cameraStatus == .authorized { showStillCamera = true }
             } label: {
                 ZStack {
-                    Circle().fill(Theme.brand).frame(width: 72, height: 72)
-                    Image(systemName: "viewfinder").font(.title.weight(.semibold)).foregroundStyle(.white)
+                    Circle().fill(Theme.brand).frame(width: 62, height: 62)
+                    Circle().stroke(Theme.ink, lineWidth: 4).frame(width: 78, height: 78)
+                    Image(systemName: "viewfinder").font(.title.weight(.semibold)).foregroundStyle(Theme.onBrand)
                 }
             }
             .disabled(!canCapture)
@@ -299,8 +315,9 @@ struct ScanScreen: View {
             .accessibilityIdentifier("typeAddress")
         }
         .font(.caption.weight(.semibold))
-        .padding(.horizontal, Theme.Space.xl)
+        .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.m)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
     private var canCapture: Bool {
@@ -394,8 +411,8 @@ struct DraftRow: View {
             case .needsChoice: StatusBadge(text: "Choose the address", symbol: "arrow.triangle.branch", tone: .warning, compact: true)
             }
             Text((draft.selected ?? draft.candidates.first)?.address.singleLine ?? "Unreadable label").font(.body.weight(.semibold)).foregroundStyle(.primary)
-            if let reason = draft.reasons.first { Text(reason.explanation).font(.caption).foregroundStyle(.secondary) }
-            if let t = draft.trackingIDs.first { Text("Tracking …\(t.suffix(6))").font(.caption).foregroundStyle(.secondary) }
+            if let reason = draft.reasons.first { Text(reason.explanation).font(.caption).foregroundStyle(Theme.neutral) }
+            if let t = draft.trackingIDs.first { Text("Tracking …\(t.suffix(6))").font(.caption).foregroundStyle(Theme.neutral) }
         }
         .padding(.vertical, 4)
         .frame(minHeight: Theme.minTouch)
