@@ -74,10 +74,20 @@ service cloud.firestore {
         && b.durationSeconds > 0 && b.durationSeconds <= 4 * 3600;
     }
 
+    function validWorkSummary(w) {
+      return w is map && w.keys().hasOnly(['required', 'optional', 'completed', 'failed', 'deferred', 'excluded', 'pending', 'unsupported'])
+        && w.required is int && w.required >= 0 && w.optional is int && w.optional >= 0
+        && w.completed is int && w.completed >= 0 && w.failed is int && w.failed >= 0
+        && w.deferred is int && w.deferred >= 0 && w.excluded is int && w.excluded >= 0
+        && w.pending is int && w.pending >= 0 && w.unsupported is int && w.unsupported >= 0
+        && w.required == w.completed + w.failed + w.deferred + w.excluded + w.pending + w.unsupported;
+    }
+
     function validSummary(s) {
-      return s is map && s.keys().hasOnly(['delivered', 'failed', 'skipped', 'excluded', 'pending', 'stopCount', 'packageCount', 'firstOutcomeAt', 'lastOutcomeAt'])
+      return s is map && s.keys().hasOnly(['delivered', 'failed', 'skipped', 'excluded', 'pending', 'stopCount', 'packageCount', 'firstOutcomeAt', 'lastOutcomeAt', 'work'])
         && s.delivered is int && s.failed is int && s.skipped is int && s.excluded is int && s.pending is int
-        && s.stopCount is int && s.packageCount is int && optTs(s, 'firstOutcomeAt') && optTs(s, 'lastOutcomeAt');
+        && s.stopCount is int && s.packageCount is int && optTs(s, 'firstOutcomeAt') && optTs(s, 'lastOutcomeAt')
+        && (!('work' in s) || validWorkSummary(s.work));
     }
 
     function validPlannedDistance(d) {
@@ -87,9 +97,12 @@ service cloud.firestore {
         && d.expiresAt <= request.time + duration.value(2, 'd');
     }
 
-    function validRoute(d, routeId) {
+    // Existing nested values were validated when created/changed. Rechecking every nested field
+    // during a revision/close-out write can exceed Firestore's expression budget on rich routes.
+    // Root types/invariants are always checked; creates validate every present nested value.
+    function validRoute(d, routeId, changedKeys) {
       return d.keys().hasOnly(['id', 'schemaVersion', 'name', 'status', 'createdAt', 'updatedAt', 'serviceDate', 'timeZoneID', 'departureMinute',
-                               'start', 'end', 'returnToStart', 'defaultServiceSeconds', 'breakRule', 'objective', 'considerTraffic',
+                               'start', 'end', 'returnToStart', 'latestArrivalMinute', 'defaultServiceSeconds', 'breakRule', 'objective', 'considerTraffic',
                                'inputRevision', 'appliedRequestID', 'appliedRevision', 'nextStopOverrideID', 'startedAt', 'completedAt',
                                'archivedAt', 'summary', 'plannedDistance'])
         && d.id == routeId && d.schemaVersion == 1
@@ -99,18 +112,21 @@ service cloud.firestore {
         && d.serviceDate is string && d.serviceDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && d.timeZoneID is string && d.timeZoneID.matches('^America/[A-Za-z_-]{3,30}$')
         && d.departureMinute is int && d.departureMinute >= 0 && d.departureMinute < 2880
-        && (!('start' in d) || validPlace(d.start))
-        && (!('end' in d) || validPlace(d.end))
+        && (!('start' in d) || (d.start is map && (!changedKeys.hasAny(['start']) || validPlace(d.start))))
+        && (!('end' in d) || (d.end is map && (!changedKeys.hasAny(['end']) || validPlace(d.end))))
         && d.returnToStart is bool
+        && (!('latestArrivalMinute' in d) || (d.latestArrivalMinute is int
+            && d.latestArrivalMinute > d.departureMinute && d.latestArrivalMinute < 2880
+            && ((d.returnToStart && 'start' in d) || (!d.returnToStart && 'end' in d))))
         && d.defaultServiceSeconds is int && d.defaultServiceSeconds >= 0 && d.defaultServiceSeconds <= 3600
-        && (!('breakRule' in d) || validBreak(d.breakRule))
+        && (!('breakRule' in d) || (d.breakRule is map && (!changedKeys.hasAny(['breakRule']) || validBreak(d.breakRule))))
         && d.objective in ['balanced', 'fastest']
         && d.considerTraffic is bool
         && d.inputRevision is int && d.inputRevision >= 1
         && optStr(d, 'appliedRequestID', 64) && optInt(d, 'appliedRevision', 1, 1000000000) && optStr(d, 'nextStopOverrideID', 64)
         && optTs(d, 'startedAt') && optTs(d, 'completedAt') && optTs(d, 'archivedAt')
-        && (!('summary' in d) || validSummary(d.summary))
-        && (!('plannedDistance' in d) || validPlannedDistance(d.plannedDistance));
+        && (!('summary' in d) || (d.summary is map && (!changedKeys.hasAny(['summary']) || validSummary(d.summary))))
+        && (!('plannedDistance' in d) || (d.plannedDistance is map && (!changedKeys.hasAny(['plannedDistance']) || validPlannedDistance(d.plannedDistance))));
     }
 
     function validResolution(r) {
@@ -161,11 +177,59 @@ service cloud.firestore {
         && d.source in ['scan', 'manual', 'paste', 'csv', 'duplicate'];
     }
 
+    function validTask(d, taskId) {
+      return d.keys().hasOnly(['id', 'schemaVersion', 'stopID', 'kind', 'required', 'title', 'instructions', 'orderRank', 'packageID', 'createdAt', 'updatedAt'])
+        && d.id == taskId && isId(d.id) && !d.id.matches('^delivery_.*') && d.schemaVersion == 1
+        && isId(d.stopID) && d.kind in ['pickup', 'checklist'] && d.required is bool
+        && isStr(d.title, 120) && isStr(d.instructions, 2000)
+        && d.orderRank is int && d.orderRank >= 0 && d.orderRank <= 1000000000
+        && (!('packageID' in d) || isId(d.packageID))
+        && d.createdAt is timestamp && d.updatedAt is timestamp;
+    }
+
+    // New work mutations must invalidate an in-flight proposal in the same atomic batch.
+    // Schema 1 outcomes remain accepted for legacy route/client compatibility.
+    function advancesRevision(uid, routeId) {
+      let path = /databases/$(database)/documents/users/$(uid)/routes/$(routeId);
+      return exists(path) ? getAfter(path).data.inputRevision > get(path).data.inputRevision
+        : getAfter(path).data.inputRevision >= 1;
+    }
+
+    function validTaskAssociation(d, uid, routeId) {
+      return !('packageID' in d)
+        || getAfter(/databases/$(database)/documents/users/$(uid)/routes/$(routeId)/packages/$(d.packageID)).data.stopID == d.stopID;
+    }
+
+    function validTaskWrite(d, taskId, uid, routeId) {
+      return validTask(d, taskId)
+        && getAfter(/databases/$(database)/documents/users/$(uid)/routes/$(routeId)/stops/$(d.stopID)).data.id == d.stopID
+        && validTaskAssociation(d, uid, routeId)
+        && advancesRevision(uid, routeId);
+    }
+
+    function validOutcomeTarget(d, uid, routeId) {
+      let packagePath = /databases/$(database)/documents/users/$(uid)/routes/$(routeId)/packages/$(d.get('packageID', '_'));
+      let taskPath = /databases/$(database)/documents/users/$(uid)/routes/$(routeId)/tasks/$(d.get('taskID', '_'));
+      return ('packageID' in d
+          && d.taskID == 'delivery_' + d.packageID
+          && getAfter(packagePath).data.stopID == d.stopID
+          && d.kind != 'completed')
+        || (!('packageID' in d)
+          && getAfter(taskPath).data.stopID == d.stopID
+          && getAfter(taskPath).data.kind in ['pickup', 'checklist']
+          && d.kind != 'delivered');
+    }
+
     function validOutcome(d, outcomeId) {
-      return d.keys().hasOnly(['id', 'schemaVersion', 'packageID', 'stopID', 'kind', 'reason', 'note', 'recordedAt', 'voidedAt', 'photoIDs'])
-        && d.id == outcomeId && d.schemaVersion == 1
-        && isId(d.packageID) && isId(d.stopID)
-        && d.kind in ['delivered', 'failed', 'skipped', 'requeued', 'excluded']
+      return d.keys().hasOnly(['id', 'schemaVersion', 'packageID', 'taskID', 'stopID', 'kind', 'reason', 'note', 'recordedAt', 'voidedAt', 'photoIDs'])
+        && d.id == outcomeId && d.schemaVersion in [1, 2]
+        && isId(d.stopID)
+        && ((d.schemaVersion == 1 && 'packageID' in d && isId(d.packageID) && !('taskID' in d)
+              && d.kind in ['delivered', 'failed', 'skipped', 'requeued', 'excluded'])
+            || (d.schemaVersion == 2 && 'taskID' in d
+              && d.taskID is string && d.taskID.matches('^[A-Za-z0-9_-]{1,73}$')
+              && (!('packageID' in d) || isId(d.packageID))
+              && d.kind in ['delivered', 'completed', 'failed', 'skipped', 'requeued', 'excluded']))
         && (!('reason' in d) || d.reason in ['noOneHome', 'accessIssue', 'addressNotFound', 'refused', 'damaged', 'businessClosed', 'unsafe', 'needsSignature', 'other'])
         && optStr(d, 'note', 500)
         && d.recordedAt is timestamp && d.recordedAt <= request.time + duration.value(1, 'h')
@@ -196,18 +260,70 @@ service cloud.firestore {
         && d.schemaVersion == 1 && validSettings(d.settings) && d.createdAt is timestamp && d.updatedAt is timestamp;
     }
 
+    // One current execution session for an account. This is explicit driver intent, independent
+    // of route selection/status, outcomes and proposal acceptance. Receipt hashes provide audit
+    // identity without duplicating a lifecycle event ledger.
+    function validExecution(d) {
+      return d.keys().hasOnly(['id', 'routeID', 'schemaVersion', 'state', 'startedAt', 'changedAt', 'transitionCount'])
+        && isId(d.id) && isId(d.routeID) && d.schemaVersion == 1
+        && d.state in ['active', 'paused', 'finished']
+        && d.startedAt is timestamp && d.changedAt is timestamp && d.changedAt >= d.startedAt
+        && d.transitionCount is int && d.transitionCount >= 0
+        && (d.transitionCount > 0 || (d.state == 'active' && d.changedAt == d.startedAt));
+    }
+
+    function executionRouteMatches(d, uid) {
+      let path = /databases/$(database)/documents/users/$(uid)/routes/$(d.routeID);
+      return getAfter(path).data.id == d.routeID
+        && ((d.state == 'finished' && getAfter(path).data.status in ['completed', 'archived'])
+          || (d.state != 'finished' && getAfter(path).data.status in ['planning', 'active']));
+    }
+
+    function startsExecution(d) {
+      return d.state == 'active' && d.transitionCount == 0 && d.changedAt == d.startedAt;
+    }
+
+    function advancesExecution(before, after) {
+      return after.changedAt >= before.changedAt
+        && ((before.state == 'finished' && after.id != before.id && startsExecution(after))
+          || (before.state in ['active', 'paused'] && after.id == before.id && after.routeID == before.routeID
+            && after.startedAt == before.startedAt && after.transitionCount == before.transitionCount + 1
+            && ((before.state == 'active' && after.state in ['paused', 'finished'])
+              || (before.state == 'paused' && after.state in ['active', 'finished']))));
+    }
+
+    function preservesExecutionOnClose(uid, routeId) {
+      let path = /databases/$(database)/documents/users/$(uid)/execution/current;
+      return !exists(path) || get(path).data.routeID != routeId || get(path).data.state == 'finished'
+        || (getAfter(path).data.id == get(path).data.id && getAfter(path).data.state == 'finished');
+    }
+
     match /users/{uid} {
       allow read: if isOwner(uid);
       allow create, update: if isOwner(uid) && validUser(request.resource.data);
       // Account deletion goes through the deleteAccount function (Admin SDK).
       allow delete: if false;
 
+      match /execution/{executionId} {
+        allow read: if isOwner(uid) && executionId == 'current';
+        allow create: if isOwner(uid) && executionId == 'current'
+          && validExecution(request.resource.data) && startsExecution(request.resource.data)
+          && executionRouteMatches(request.resource.data, uid);
+        allow update: if isOwner(uid) && executionId == 'current'
+          && validExecution(request.resource.data) && advancesExecution(resource.data, request.resource.data)
+          && executionRouteMatches(request.resource.data, uid);
+        allow delete: if false;
+      }
+
       match /routes/{routeId} {
         allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && isId(routeId) && validRoute(request.resource.data, routeId);
-        allow update: if isOwner(uid) && validRoute(request.resource.data, routeId)
+        allow create: if isOwner(uid) && isId(routeId) && validRoute(request.resource.data, routeId, request.resource.data.keys());
+        allow update: if isOwner(uid) && validRoute(request.resource.data, routeId, request.resource.data.diff(resource.data).affectedKeys())
           && request.resource.data.createdAt == resource.data.createdAt
-          && request.resource.data.inputRevision >= resource.data.inputRevision;
+          && request.resource.data.inputRevision >= resource.data.inputRevision
+          && (!(request.resource.data.status in ['completed', 'archived'])
+            || request.resource.data.status == resource.data.status
+            || preservesExecutionOnClose(uid, routeId));
         // Routes are archived, not deleted, so history and outcomes are never orphaned.
         allow delete: if false;
 
@@ -223,16 +339,29 @@ service cloud.firestore {
           allow delete: if isOwner(uid);
         }
 
+        match /tasks/{taskId} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid) && validTaskWrite(request.resource.data, taskId, uid, routeId);
+          allow update: if isOwner(uid) && validTaskWrite(request.resource.data, taskId, uid, routeId)
+            && request.resource.data.stopID == resource.data.stopID
+            && request.resource.data.kind == resource.data.kind
+            && request.resource.data.get('packageID', '') == resource.data.get('packageID', '');
+          allow delete: if isOwner(uid) && advancesRevision(uid, routeId);
+        }
+
         match /outcomes/{outcomeId} {
           allow read: if isOwner(uid);
           allow create: if isOwner(uid) && isId(outcomeId) && validOutcome(request.resource.data, outcomeId)
-            && !('voidedAt' in request.resource.data);
+            && !('voidedAt' in request.resource.data)
+            && (request.resource.data.schemaVersion == 1
+                || (validOutcomeTarget(request.resource.data, uid, routeId) && advancesRevision(uid, routeId)));
           // Append-only: an identical replay is a no-op; otherwise only voidedAt may be added, once.
           allow update: if isOwner(uid) && (
             request.resource.data.diff(resource.data).affectedKeys().size() == 0
             || (!('voidedAt' in resource.data)
                 && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voidedAt'])
-                && request.resource.data.voidedAt is timestamp));
+                && request.resource.data.voidedAt is timestamp
+                && (resource.data.schemaVersion == 1 || advancesRevision(uid, routeId))));
           allow delete: if false;
         }
 
@@ -241,6 +370,26 @@ service cloud.firestore {
           allow create: if isOwner(uid) && isId(photoId) && validPhoto(request.resource.data, photoId, uid, routeId);
           allow update: if isOwner(uid) && request.resource.data.diff(resource.data).affectedKeys().size() == 0;
           allow delete: if isOwner(uid);
+        }
+
+        // A WP2 command's effects and receipt are written in one client transaction. Stable command
+        // identity prevents a lost acknowledgement from incrementing revisions or applying Undo
+        // twice. Receipts contain hashes and counters only, never addresses or operational labels.
+        match /mutationReceipts/{commandId} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid) && isId(commandId)
+            && request.resource.data.keys().hasOnly(['id', 'schemaVersion', 'accountID', 'routeID', 'sequence', 'payloadDigest', 'baseRevision', 'appliedRevision', 'appliedAt'])
+            && request.resource.data.id == commandId && request.resource.data.schemaVersion == 1
+            && request.resource.data.accountID == uid && request.resource.data.routeID == routeId
+            && request.resource.data.sequence is int && request.resource.data.sequence > 0
+            && request.resource.data.payloadDigest is string && request.resource.data.payloadDigest.matches('^[a-f0-9]{64}$')
+            && request.resource.data.baseRevision is int && request.resource.data.baseRevision >= 0
+            && request.resource.data.appliedRevision is int && request.resource.data.appliedRevision >= 1
+            && request.resource.data.appliedRevision >= request.resource.data.baseRevision
+            && request.resource.data.appliedAt == request.time
+            && getAfter(/databases/$(database)/documents/users/$(uid)/routes/$(routeId)).data.inputRevision == request.resource.data.appliedRevision;
+          allow update: if isOwner(uid) && request.resource.data.diff(resource.data).affectedKeys().size() == 0;
+          allow delete: if false;
         }
       }
 
