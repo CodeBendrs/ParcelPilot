@@ -82,6 +82,8 @@ struct PendingPhoto: Codable, Hashable, Identifiable, Sendable {
 @MainActor
 protocol PhotoStore: AnyObject {
     var pending: [PendingPhoto] { get }
+    /// Storage/corruption failures requiring attention; normal offline photos remain quiet.
+    var storageIssue: String? { get }
     /// Saves the JPEG durably on the device and schedules upload. Returns the photo ID.
     func add(jpeg: Data, routeID: RouteID, stopID: StopID, packageIDs: [PackageID]) throws -> PhotoID
     func image(for photo: DeliveryPhoto, routeID: RouteID) async throws -> UIImage
@@ -90,6 +92,8 @@ protocol PhotoStore: AnyObject {
     func deletePending(_ id: PhotoID)
     func resumeUploads()
 }
+
+extension PhotoStore { var storageIssue: String? { nil } }
 
 // MARK: - Account
 

@@ -120,7 +120,8 @@ final class LocalPhotoStore: PhotoStore {
         let id = StableID.make()
         try jpeg.write(to: directory.appendingPathComponent("\(id).jpg"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         let photo = DeliveryPhoto(id: id, stopID: stopID, packageIDs: packageIDs, storagePath: "device://DemoPhotos/\(id).jpg", byteSize: jpeg.count, capturedAt: Date())
-        store.commitPrepared([.putPhoto(routeID, photo)], label: "Save photo")
+        let result = store.commitPrepared([.putPhoto(routeID, photo)], label: "Save photo", critical: true)
+        if case let .failed(error) = result { throw error }
         return id
     }
 
@@ -132,21 +133,24 @@ final class LocalPhotoStore: PhotoStore {
     func pendingImage(_ id: PhotoID) -> UIImage? { nil }
 
     func delete(photo: DeliveryPhoto, routeID: RouteID) async throws {
-        try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(photo.id).jpg"))
-        store.commitPrepared([.deletePhoto(routeID, photo.id)], label: "Delete photo")
+        let result = store.commitPrepared([.deletePhoto(routeID, photo.id)], label: "Delete photo", critical: true)
+        if case let .failed(error) = result { throw error }
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("\(photo.id).jpg"))
     }
 
     func deletePending(_ id: PhotoID) {}
     func resumeUploads() {}
 
-    func eraseAll() { try? FileManager.default.removeItem(at: directory) }
+    func eraseAll() throws {
+        if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) }
+    }
 }
 
 /// **Demo only.** Account actions for demo mode just erase on-device data.
 @MainActor
 final class DemoAccountService: AccountService {
-    let erase: () -> Void
-    init(erase: @escaping () -> Void) { self.erase = erase }
-    func deleteAccount(appleAuthorizationCode: String?) async throws { erase() }
-    func signOut() throws { erase() }
+    let erase: () throws -> Void
+    init(erase: @escaping () throws -> Void) { self.erase = erase }
+    func deleteAccount(appleAuthorizationCode: String?) async throws { try erase() }
+    func signOut() throws { } // Leaving demo mode retains its protected route on this iPhone.
 }
