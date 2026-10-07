@@ -5,10 +5,12 @@ struct OptimizeSheet: View {
     let snapshot: RouteSnapshot
     enum OriginChoice: Hashable { case routeStart, currentLocation, stop(StopID) }
     var defaultOrigin: OriginChoice
+    var keepOrder: () -> Void = {}
 
     @Environment(AppServices.self) private var services
     @Environment(ToastCenter.self) private var toasts
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var origin: OriginChoice = .routeStart
     @State private var fixedNext: StopID?
     @State private var computeBaseline = false
@@ -22,6 +24,7 @@ struct OptimizeSheet: View {
 
     private var live: RouteSnapshot { services.store.current?.route.id == snapshot.route.id ? services.store.current! : snapshot }
     private var isDelivering: Bool { live.route.status == .active }
+    private var unreadableWork: Bool { !services.store.currentReadIssues.isEmpty || live.hasUnsupportedRequiredWork }
 
     var body: some View {
         NavigationStack {
@@ -35,27 +38,29 @@ struct OptimizeSheet: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if let job, [.succeeded, .infeasible].contains(job.status), let proposal = job.proposal {
                     let verdict = ProposalValidator.validate(proposal, against: live, now: Date(), demoMode: services.verifier.allowsSynthetic)
-                    VStack(spacing: Theme.Space.xs) {
-                        Button { apply(proposal) } label: { Label("Use this order", systemImage: "checkmark") }
-                            .buttonStyle(PrimaryActionButtonStyle())
-                            .disabled(verdict != .valid)
-                            .accessibilityIdentifier("applyPlan")
-                        Button("Keep my current order") { dismiss() }
-                            .frame(maxWidth: .infinity, minHeight: Theme.minTouch)
-                            .accessibilityIdentifier("keepCurrentOrder")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Nothing changes until you choose.").font(.footnote).foregroundStyle(Theme.neutral)
+                        let footerLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+                        footerLayout {
+                            Button("Keep my order") { keepOrder(); dismiss() }
+                                .buttonStyle(ActionButtonStyle(height: 64))
+                                .accessibilityIdentifier("keepCurrentOrder")
+                            Button { apply(proposal) } label: { Label("Use this order", systemImage: "checkmark") }
+                                .buttonStyle(ActionButtonStyle(tint: Theme.onBrand, fill: Theme.brand, height: 64))
+                                .disabled(verdict != .valid || unreadableWork).accessibilityIdentifier("applyPlan")
+                        }
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                     }
-                    .padding(.horizontal, Theme.Space.l)
-                    .padding(.vertical, Theme.Space.s)
-                    .background(Theme.elevated)
+                    .padding(16).background(Theme.panel)
                 }
             }
-            .navigationTitle(isDelivering ? "Re-plan remaining" : "Optimize route")
+            .navigationTitle(job?.proposal != nil ? "Proposed order" : isDelivering || defaultOrigin == .currentLocation ? "Re-plan remaining" : "Optimize route")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }
             .onAppear {
-                origin = defaultOrigin == .currentLocation && isDelivering ? .currentLocation : (live.route.start == nil ? .currentLocation : .routeStart)
+                origin = defaultOrigin == .currentLocation ? .currentLocation : (live.route.start == nil ? .currentLocation : .routeStart)
                 considerTraffic = live.route.considerTraffic
             }
         }
@@ -93,13 +98,16 @@ struct OptimizeSheet: View {
         }
 
         Section("What gets planned") {
+            if unreadableWork {
+                Banner(symbol: "exclamationmark.triangle", text: "Some work couldn't be read safely. Planning is blocked until the route can be read with a compatible app.", tone: .danger)
+            }
             LabeledContent("Stops to plan", value: "\(eligibility.eligible.count)")
             let grouped = Dictionary(grouping: eligibility.excluded, by: \.reason)
             ForEach(grouped.keys.sorted(by: { $0.rawValue < $1.rawValue }), id: \.self) { reason in
                 if reason != .completed {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(grouped[reason]!.count) not included").font(.subheadline.weight(.semibold))
-                        Text(ExcludedStop(stopID: "", reason: reason).explanation).font(.caption).foregroundStyle(.secondary)
+                        Text(ExcludedStop(stopID: "", reason: reason).explanation).font(.caption).foregroundStyle(Theme.neutral)
                     }
                 }
             }
@@ -120,9 +128,10 @@ struct OptimizeSheet: View {
                 if starting { ProgressView().frame(maxWidth: .infinity) } else { Label("Calculate", systemImage: "wand.and.stars") }
             }
             .buttonStyle(PrimaryActionButtonStyle())
-            .disabled(starting || eligibility.eligible.isEmpty || eligibility.eligible.count > RouteLimits.maxEligibleStopsPerOptimization)
+            .disabled(unreadableWork || !services.connectivity.isOnline || starting || eligibility.eligible.isEmpty || eligibility.eligible.count > RouteLimits.maxEligibleStopsPerOptimization)
             .accessibilityIdentifier("calculate")
             .listRowBackground(Color.clear)
+            if !services.connectivity.isOnline { Text("Needs a connection").font(.footnote).foregroundStyle(Theme.warning) }
         }
     }
 
@@ -138,7 +147,7 @@ struct OptimizeSheet: View {
                         Text("Calculating… \(Int(ctx.date.timeIntervalSince(started))) s").font(.headline.monospacedDigit())
                     }
                     Text(services.mode.isDemo ? "Running on this iPhone." : "The calculation runs on the server. You can close this screen — the result is saved and your stops stay as they are until you apply it.")
-                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .font(.subheadline).foregroundStyle(Theme.neutral).multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Theme.Space.l)
@@ -168,6 +177,7 @@ struct OptimizeSheet: View {
     }
 
     private func start() async {
+        guard !unreadableWork else { error = .invalid("Some required work couldn't be read safely."); return }
         starting = true
         error = nil
         defer { starting = false }
@@ -205,7 +215,10 @@ struct OptimizeSheet: View {
     }
 
     private func apply(_ proposal: OptimizationProposal) {
-        services.store.apply(proposal, to: live)
+        guard services.store.apply(proposal, to: live).isCommitted else {
+            error = .unavailable(services.store.persistenceIssue ?? "The route order couldn't be saved on this iPhone. Try again.")
+            return
+        }
         Haptics.success()
         toasts.show("New order applied", symbol: "wand.and.stars", tone: .success)
         dismiss()
@@ -217,11 +230,26 @@ struct ProposalPreview: View {
     let snapshot: RouteSnapshot
     var recalculate: () -> Void
     @Environment(AppServices.self) private var services
+    @State private var proposed = true
+    @State private var selectedStopID: StopID?
 
     var body: some View {
         let verdict = ProposalValidator.validate(proposal, against: snapshot, now: Date(), demoMode: services.verifier.allowsSynthetic)
         let tz = snapshot.route.timeZone
         let unit = services.settings.settings.distanceUnit
+        Section {
+            RouteMapView(snapshot: snapshot, planState: .current(proposal), selectedStopID: $selectedStopID, bottomInset: 0, displayOrder: proposed ? ProposalValidator.sequencesAfterApplying(proposal, to: snapshot).sorted { $0.value < $1.value }.map(\.key) : snapshot.orderedStops.map(\.id), proposed: proposed)
+                .frame(height: 270)
+                .overlay(alignment: .topLeading) {
+                    Picker("Route overlay", selection: $proposed) {
+                        Text("Proposed").tag(true)
+                        Text("Current").tag(false)
+                    }
+                    .pickerStyle(.segmented).frame(width: 240).padding(12)
+                    .accessibilityIdentifier("proposalMapToggle")
+                }
+                .listRowInsets(EdgeInsets())
+        }
         Section {
             switch verdict {
             case .valid: EmptyView()
@@ -246,7 +274,12 @@ struct ProposalPreview: View {
                 let parts = ["\(DisplayFormat.duration(seconds: m.serviceSeconds)) at stops"]
                     + (m.waitSeconds >= 60 ? ["\(DisplayFormat.duration(seconds: m.waitSeconds)) waiting for delivery windows"] : [])
                     + (m.breakSeconds > 0 ? ["\(DisplayFormat.duration(seconds: m.breakSeconds)) break"] : [])
-                Text("Includes " + parts.joined(separator: ", ") + ".").font(.caption).foregroundStyle(.secondary)
+                Text("Includes " + parts.joined(separator: ", ") + ".").font(.caption).foregroundStyle(Theme.neutral)
+                if let minute = snapshot.route.latestArrivalMinute {
+                    Label("\(snapshot.route.returnToStart ? "Back by" : "Arrive by") \(WallClock.label(minute)) · includes the drive to \(snapshot.route.returnToStart ? "Start" : "End").", systemImage: "clock")
+                        .font(.subheadline)
+                        .accessibilityIdentifier("latestArrivalSummary")
+                }
             }
             if let savings = proposal.savings {
                 Label(savings.seconds >= 0 ? "About \(DisplayFormat.duration(seconds: savings.seconds)) and \(DisplayFormat.distance(meters: max(0, savings.meters), unit: unit)) less than your current order (same conditions)." : "Your current order is already as fast as this one.", systemImage: "chart.line.downtrend.xyaxis")
@@ -263,7 +296,7 @@ struct ProposalPreview: View {
                     VStack(alignment: .leading, spacing: Theme.Space.s) {
                         Text(stopName(u.stopID)).font(.headline)
                         Text(u.issue.message).font(.subheadline)
-                        ForEach(u.issue.suggestions, id: \.self) { s in Label(s, systemImage: "lightbulb").font(.caption).foregroundStyle(.secondary) }
+                        ForEach(u.issue.suggestions, id: \.self) { s in Label(s, systemImage: "lightbulb").font(.caption).foregroundStyle(Theme.neutral) }
                     }
                     .padding(.vertical, 4)
                 }
@@ -274,14 +307,22 @@ struct ProposalPreview: View {
             }
         }
 
+        let excluded = proposal.excluded.filter { $0.reason != .completed }
+        if !excluded.isEmpty {
+            Section("Not placed in this plan") {
+                ForEach(excluded, id: \.stopID) { stop in
+                    Banner(symbol: "exclamationmark.triangle", text: "\(stopName(stop.stopID)) · \(stop.explanation)", tone: .warning)
+                }
+            }
+        }
         if !proposal.warnings.isEmpty {
             Section("Notes") { ForEach(proposal.warnings, id: \.self) { Text($0).font(.subheadline) } }
         }
 
         let changes = ProposalValidator.positionChanges(proposal, snapshot: snapshot)
-        Section("Changes to your order (\(changes.count))") {
+        Section("\(changes.count) STOPS CHANGE POSITION") {
             if changes.isEmpty {
-                Text("The proposed order matches your current order.").font(.subheadline).foregroundStyle(.secondary)
+                Text("The proposed order matches your current order.").font(.subheadline).foregroundStyle(Theme.neutral)
             }
             ForEach(changes.prefix(60), id: \.stopID) { change in
                 HStack {
