@@ -15,6 +15,7 @@ struct StopDetailView: View {
     @State private var navError: String?
     @State private var choosingNavApp = false
     @State private var removedPackage: Package?
+    @State private var continuingFrom: Stop?
 
     var body: some View {
         NavigationStack {
@@ -32,31 +33,23 @@ struct StopDetailView: View {
         let number = (snapshot.orderedStops.firstIndex { $0.id == stop.id } ?? 0) + 1
         let route = snapshot.route
         return List {
+            if let issue = services.store.persistenceIssue {
+                Section { Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger) }
+            }
             Section {
-                VStack(alignment: .leading, spacing: Theme.Space.s) {
-                    HStack {
-                        StopNumberView(number: number, status: ledger.stopStatus(stop, packages: snapshot.packages))
-                        StatusBadge(text: stop.addressStatus.label, symbol: stop.addressStatus.symbol, tone: stop.addressStatus.tone, compact: true)
-                    }
-                    if let unit = stop.address.unitLabel { UnitBadge(label: unit) }
-                    Text(stop.address.streetLine ?? stop.address.singleLine).font(.address)
-                    Text([stop.address.municipality, stop.address.province?.rawValue, stop.address.postalCode].compactMap { $0 }.joined(separator: " ")).foregroundStyle(.secondary)
-                    if let name = stop.address.recipientName { Label(name, systemImage: "person").font(.subheadline) }
-                }
-                .padding(.vertical, Theme.Space.xs)
+                DeliveryDestination(stop: stop, timeZone: route.timeZone)
+                StatusBadge(text: stop.addressStatus.label, symbol: stop.addressStatus.symbol, tone: stop.addressStatus.tone, compact: true)
                 if !stop.reviewReasons.isEmpty {
                     ForEach(stop.reviewReasons, id: \.self) { Label($0.explanation, systemImage: "exclamationmark.triangle").font(.subheadline).foregroundStyle(Theme.warning) }
                 }
                 if let r = stop.resolution {
                     LabeledContent("Location", value: locationText(r, now: Date()))
                 }
-                Button { editingAddress = CandidateBox(candidate: IntakeCandidate(routeID: route.id, source: .manual, address: stop.address, driverEdited: true)) } label: { Label("Edit or re-check address", systemImage: "pencil") }
-                    .accessibilityIdentifier("editStopAddress")
-                Button { pinning = true } label: { Label(stop.resolution?.match == .driverPin ? "Move pin" : "Place pin on map", systemImage: "mappin.and.ellipse") }
-                    .accessibilityIdentifier("placeStopPin")
-                Button { navigate(stop, route) } label: { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond") }
-                    .disabled(!NavigationLauncher.canNavigate(to: stop))
-                Button { services.store.setNextStop(stop.id, in: route); toasts.show("Set as next stop", symbol: "arrow.right.circle", tone: .info) } label: { Label("Deliver this stop next", systemImage: "arrow.right.circle") }
+
+            }
+
+            Section("Stop work") {
+                StopWorkContent(snapshot: snapshot, stop: stop, allowsEditing: true)
             }
 
             Section("Packages (\(packages.count))") {
@@ -67,20 +60,25 @@ struct StopDetailView: View {
                             Image(systemName: status.symbolName).foregroundStyle(status.tone.color)
                             VStack(alignment: .leading) {
                                 Text(p.storageLocation ?? "No vehicle location").font(.body.weight(.semibold)).foregroundStyle(.primary)
-                                Text([p.trackingID, p.size?.label, status.label].compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                                Text([p.trackingID, p.size?.label, status.label].compactMap { $0 }.joined(separator: " · ")).font(.footnote).foregroundStyle(Theme.neutral)
                             }
                         }
                         .frame(minHeight: Theme.minTouch)
                     }
+                    .buttonStyle(.row)
                     .accessibilityIdentifier("packageRow.\(p.id)")
                     .swipeActions { Button("Remove", role: .destructive) {
-                        services.store.delete(package: p, in: snapshot)
+                        guard services.store.delete(package: p, in: snapshot).isCommitted else { return }
                         removedPackage = p
                     } }
+                    Button("Remove package", role: .destructive) {
+                        guard services.store.delete(package: p, in: snapshot).isCommitted else { return }
+                        removedPackage = p
+                    }.frame(minHeight: 44).accessibilityIdentifier("removePackage.\(p.id)")
                 }
                 if let removedPackage {
                     Button("Undo remove package", systemImage: "arrow.uturn.backward") {
-                        services.store.restore(package: removedPackage, in: route.id)
+                        guard services.store.restore(package: removedPackage, in: route.id).isCommitted else { return }
                         self.removedPackage = nil
                     }
                     .frame(minHeight: Theme.minTouch)
@@ -99,7 +97,7 @@ struct StopDetailView: View {
                     var s = stop; s.serviceSeconds = max(0, (stop.serviceSeconds ?? route.defaultServiceSeconds) - 30); services.store.update(stop: s, in: route, invalidatesPlan: true)
                 })
             } header: {
-                Text("Planning")
+                Text("Delivery window & planning")
             } footer: {
                 Text("Changing a window, pin or stop time makes the current optimized times outdated.")
             }
@@ -121,7 +119,7 @@ struct StopDetailView: View {
                         HStack {
                             Text(o.kind.rawValue.capitalized + (o.reason.map { " · \($0.label)" } ?? "")).strikethrough(o.voidedAt != nil)
                             Spacer()
-                            Text(DisplayFormat.time(o.recordedAt, timeZone: route.timeZone)).foregroundStyle(.secondary).font(.subheadline.monospacedDigit())
+                            Text(DisplayFormat.time(o.recordedAt, timeZone: route.timeZone)).foregroundStyle(Theme.neutral).font(.subheadline.monospacedDigit())
                         }
                         .accessibilityElement(children: .combine)
                         .accessibilityValue(o.voidedAt != nil ? "undone" : "")
@@ -131,13 +129,34 @@ struct StopDetailView: View {
 
             PhotosSection(snapshot: snapshot, stop: stop, add: { photoTarget = true }, view: { viewingPhoto = $0 })
 
+            Section("Address & pin") {
+                Button { editingAddress = CandidateBox(candidate: IntakeCandidate(routeID: route.id, source: .manual, address: stop.address, driverEdited: true)) } label: { Label("Edit or re-check address", systemImage: "pencil") }
+                    .accessibilityIdentifier("editStopAddress")
+                Button { pinning = true } label: { Label(stop.resolution?.match == .driverPin ? "Move pin" : "Place pin on map", systemImage: "mappin.and.ellipse") }
+                    .accessibilityIdentifier("placeStopPin")
+            }
+            Section("Actions") {
+                Button {
+                    if let current = snapshot.nextStop(), current.id != stop.id,
+                       snapshot.workLedger.hasActionableRequiredWork(at: current.id) {
+                        continuingFrom = current
+                        services.store.recordPendingWorkReminder(in: snapshot, stopID: current.id)
+                    } else { chooseNext(stop, route: route) }
+                } label: { Label("Deliver next", systemImage: "arrow.right.circle") }
+                    .frame(minHeight: 44).accessibilityIdentifier("deliverNext")
+                Button { navigate(stop, route) } label: { Label("Navigate", systemImage: "location") }
+                    .disabled(!NavigationLauncher.canNavigate(to: stop))
+            }
+
             Section {
                 Button("Remove stop and its packages", role: .destructive) { confirmDelete = true }
             }
         }
+        .toasts(toasts)
         .navigationTitle("Stop \(number)")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        .onAppear { services.store.recordWorkPresentation(in: snapshot, stopID: stop.id) }
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.accessibilityIdentifier("closeStopDetail") } }
         .sheet(item: $editingAddress) { box in
             AddressEditSheet(candidate: box.candidate, stop: stop, route: route)
         }
@@ -147,7 +166,7 @@ struct StopDetailView: View {
                 var s = stop
                 s.resolution = StopResolution(provider: nil, placeID: stop.resolution?.placeID, located: LocatedPoint(point: point, source: .driverPin), match: .driverPin, resolvedAt: Date())
                 s.addressStatus = .driverConfirmed
-                services.store.update(stop: s, in: route, invalidatesPlan: true)
+                return services.store.update(stop: s, in: route, invalidatesPlan: true).isCommitted
             }
         }
         .sheet(isPresented: $photoTarget) {
@@ -156,9 +175,9 @@ struct StopDetailView: View {
         .sheet(item: $viewingPhoto) { photo in PhotoViewer(photo: photo, routeID: route.id) }
         .confirmationDialog("Remove this stop?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Remove stop", role: .destructive) {
-                services.store.delete(stop: stop, from: snapshot)
-                toasts.show("Stop removed", symbol: "trash", tone: .neutral, undo: {
-                    services.store.restore(stop: stop, packages: packages, in: route.id)
+                guard services.store.delete(stop: stop, from: snapshot).isCommitted else { return }
+                toasts.show("Stop removed", symbol: "trash", tone: .neutral, undoAcknowledged: {
+                    services.store.restore(stop: stop, packages: packages, tasks: snapshot.tasks.filter { $0.stopID == stop.id }, in: route.id).isCommitted
                 })
                 dismiss()
             }
@@ -167,6 +186,21 @@ struct StopDetailView: View {
             Button("Apple Maps") { launch(stop, route, using: .appleMaps) }
             Button("Google Maps") { launch(stop, route, using: .googleMaps) }
             Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Required work is still pending", isPresented: Binding(get: { continuingFrom != nil }, set: { if !$0 { continuingFrom = nil } }), titleVisibility: .visible) {
+            Button("Continue to this stop") {
+                if let prior = continuingFrom { services.store.recordPendingWorkReminder(in: snapshot, stopID: prior.id, bypassed: true) }
+                continuingFrom = nil
+                chooseNext(stop, route: route)
+            }.accessibilityIdentifier("continueWithPendingWork")
+            Button("Keep current stop") { continuingFrom = nil }
+                .accessibilityIdentifier("keepCurrentStop")
+        } message: {
+            if let prior = continuingFrom {
+                let pending = snapshot.workLedger.actionableTasks(at: prior.id).filter(\.required)
+                let pickups = pending.filter { $0.kind == .pickup }.count
+                Text(pickups > 0 ? "\(pickups) required pickup(s) still pending at your current stop. Continuing preserves all unfinished work." : "\(pending.count) required item(s) still pending at your current stop. Continuing preserves all unfinished work.")
+            }
         }
         .alert("Couldn't open navigation", isPresented: Binding(get: { navError != nil }, set: { if !$0 { navError = nil } })) {
             Button("OK", role: .cancel) {}
@@ -187,6 +221,12 @@ struct StopDetailView: View {
     private func addPackage(_ snapshot: RouteSnapshot, _ stop: Stop) {
         let p = Package(stopID: stop.id, recipientName: stop.address.recipientName, source: .manual)
         editingPackage = p
+    }
+
+    private func chooseNext(_ stop: Stop, route: Route) {
+        guard services.store.setNextStop(stop.id, in: route).isCommitted else { return }
+        toasts.show("Set as next stop", symbol: "arrow.right.circle", tone: .info)
+        dismiss()
     }
 
     private func navigate(_ stop: Stop, _ route: Route) {
@@ -215,6 +255,9 @@ struct AddressEditSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let issue = services.store.persistenceIssue {
+                    Section { Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger) }
+                }
                 Section("Address") {
                     TextField("Recipient", text: binding(\.recipientName))
                     HStack { TextField("Unit", text: binding(\.unit)); TextField("Type", text: binding(\.unitDesignator)) }
@@ -270,7 +313,7 @@ struct AddressEditSheet: View {
         s.addressStatus = status
         s.resolution = resolution
         s.reviewReasons = reasons
-        services.store.update(stop: s, in: route, invalidatesPlan: true)
+        guard services.store.update(stop: s, in: route, invalidatesPlan: true).isCommitted else { return }
         dismiss()
     }
 }
@@ -285,6 +328,9 @@ struct PackageEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let issue = services.store.persistenceIssue {
+                    Section { Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger) }
+                }
                 TextField("Tracking number", text: Binding(get: { package.trackingID ?? "" }, set: { package.trackingID = $0.isEmpty ? nil : $0 }))
                     .textInputAutocapitalization(.characters).autocorrectionDisabled()
                 TextField("Recipient", text: Binding(get: { package.recipientName ?? "" }, set: { package.recipientName = $0.isEmpty ? nil : $0 }))
@@ -302,9 +348,9 @@ struct PackageEditor: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Save") {
                     if isNew {
                         let currentRoute = services.store.current?.route ?? route
-                        services.store.commitPrepared([.putPackage(route.id, package), .updateRoute(currentRoute, bumpRevision: true)], label: "Add package")
+                        guard services.store.commitPrepared([.putPackage(route.id, package), .updateRoute(currentRoute, bumpRevision: true)], label: "Add package").isCommitted else { return }
                     } else {
-                        services.store.update(package: package, in: route)
+                        guard services.store.update(package: package, in: route).isCommitted else { return }
                     }
                     dismiss()
                 }
@@ -351,11 +397,11 @@ struct TimeWindowEditor: View {
             if kind == 1 {
                 MinutePicker(title: "From", minute: $start, timeZone: route.timeZone, allowNextDay: true)
                 MinutePicker(title: "Until", minute: $end, timeZone: route.timeZone, allowNextDay: true)
-                Text("Hard window: the plan may wait if early and reports a conflict rather than arriving late.").font(.caption).foregroundStyle(.secondary)
+                Text("Hard window: the plan may wait if early and reports a conflict rather than arriving late.").font(.footnote).foregroundStyle(Theme.neutral)
                 if end <= start { Text("“Until” must be after “From”. For a window past midnight, turn on Next day.").font(.caption).foregroundStyle(Theme.danger) }
             } else if kind == 2 {
                 MinutePicker(title: "Arrive by", minute: $end, timeZone: route.timeZone, allowNextDay: true)
-                Text("Soft deadline: the optimizer tries to arrive by this time but may arrive later if needed.").font(.caption).foregroundStyle(.secondary)
+                Text("Soft deadline: the optimizer tries to arrive by this time but may arrive later if needed.").font(.footnote).foregroundStyle(Theme.neutral)
             }
             if kind != currentKind || (kind != 0 && (start != stop.timeWindow?.startMinute ?? start || end != stop.timeWindow?.endMinute)) {
                 Button("Save delivery time") { save() }
@@ -386,7 +432,7 @@ struct TimeWindowEditor: View {
         case 2: s.timeWindow = TimeWindowConstraint(kind: .softDeadline, startMinute: nil, endMinute: end)
         default: s.timeWindow = nil
         }
-        services.store.update(stop: s, in: route, invalidatesPlan: true)
+        guard services.store.update(stop: s, in: route, invalidatesPlan: true).isCommitted else { return }
         Haptics.success()
     }
 }
