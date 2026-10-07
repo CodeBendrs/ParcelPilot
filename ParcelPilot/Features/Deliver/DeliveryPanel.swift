@@ -6,6 +6,8 @@ struct DeliveryPanel: View {
     let planState: PlanTracker.PlanState
     @Binding var sheet: WorkspaceSheet?
     @Binding var selectedStopID: StopID?
+    var backToPlanning: () -> Void
+    var startRoute: () -> Void
 
     @Environment(AppServices.self) private var services
     @Environment(ToastCenter.self) private var toasts
@@ -16,6 +18,9 @@ struct DeliveryPanel: View {
     @State private var navError: String?
     @State private var confirmFinish = false
     @State private var returnedFromNavigation: StopID?
+    @State private var deselected: Set<PackageID> = []
+    @State private var showMap = false
+    @State private var showStops = false
 
     enum OutcomeSheet: Identifiable {
         case packages(Stop, OutcomeKind)
@@ -31,77 +36,92 @@ struct DeliveryPanel: View {
     struct PhotoTarget: Identifiable { var stopID: StopID; var packageIDs: [PackageID]; var id: String { stopID } }
 
     var body: some View {
-        let ledger = snapshot.ledger
-        let ordered = snapshot.orderedStops
         let next = snapshot.nextStop()
-        let summary = snapshot.summary()
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Space.l) {
-                    ProgressHeader(summary: summary)
-                    if let id = returnedFromNavigation, let stop = snapshot.stops.first(where: { $0.id == id }), ledger.stopStatus(stop, packages: snapshot.packages) != .completed {
-                        Banner(symbol: "arrow.uturn.backward.circle", text: "Back from navigation. Record what happened at \(stop.address.streetLine ?? "this stop") — nothing was marked automatically.", tone: .info)
-                            .accessibilityIdentifier("returnBanner")
-                    }
-                    if let next {
-                        let number = (ordered.firstIndex(where: { $0.id == next.id }) ?? 0) + 1
-                        NextStopInfo(
-                            stop: next,
-                            number: number,
-                            total: ordered.count,
-                            packages: snapshot.packages(for: next.id),
-                            ledger: ledger,
-                            visit: visit(for: next.id),
-                            timeZone: snapshot.route.timeZone,
-                            details: { sheet = .stop(next.id) }
-                        )
-                        .onAppear { selectedStopID = next.id }
-                    } else if snapshot.stops.isEmpty {
-                        StateMessageView(symbol: "shippingbox", title: "No stops on this route", message: "Add stops in Plan, then come back to deliver.", actions: [.init(title: "Add stops", symbol: "plus") { sheet = .addStops }])
-                    } else {
-                        AllDoneCard(summary: summary) { confirmFinish = true }
-                    }
-
-                    NeedsDecisionSection(snapshot: snapshot)
-
-                    ViewThatFits(in: .horizontal) {
-                      HStack {
-                        Button {
-                            sheet = .optimize
-                        } label: {
-                            Label("Re-plan remaining", systemImage: "arrow.triangle.branch")
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .accessibilityHint("Optimizes only the stops not yet handled, from your location or a stop you choose")
-                        Spacer()
-                        if next != nil {
-                            Button("Finish early…") { confirmFinish = true }
-                                .font(.subheadline)
-                                .frame(minHeight: Theme.minTouch)
-                        }
-                      }
-                      VStack(alignment: .leading, spacing: Theme.Space.s) {
-                        Button { sheet = .optimize } label: { Label("Re-plan remaining", systemImage: "arrow.triangle.branch") }
-                            .buttonStyle(SecondaryButtonStyle())
-                        if next != nil {
-                            Button("Finish early…") { confirmFinish = true }.frame(minHeight: Theme.minTouch)
-                        }
-                      }
+        let open = next.map { stop in snapshot.packages(for: stop.id).filter { !snapshot.ledger.status(of: $0.id).isHandled } } ?? []
+        let chosen = open.map(\.id).filter { !deselected.contains($0) }
+        let mixedWork = next.map { stop in snapshot.tasks.contains { $0.stopID == stop.id } } ?? false
+        FocusLayout { collapsed in
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(next.map { stop in "Stop \((snapshot.orderedStops.firstIndex { $0.id == stop.id } ?? 0) + 1) of \(snapshot.stops.count)" } ?? "Required work review")
+                        .font(.stopProgress)
+                    Spacer(minLength: 0)
+                    Button { sheet = .finder } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44).background(Theme.fill, in: Circle()) }
+                        .accessibilityLabel("Find package").accessibilityIdentifier("findPackage")
+                    Button { showStops = true } label: { Label("Stops", systemImage: "list.bullet").lineLimit(1) }
+                        .buttonStyle(SecondaryButtonStyle()).accessibilityIdentifier("stopsSheet")
+                }
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                ExecutionControls(snapshot: snapshot, start: startRoute)
+                StatusLine(snapshot: snapshot)
+                SyncStateRow()
+                if services.mode.isDemo { DemoBadge() }
+                Divider().overlay(Theme.hairline)
+                if let next {
+                    DeliveryDestination(stop: next, timeZone: snapshot.route.timeZone, collapsed: collapsed, details: { sheet = .stop(next.id) }, showMap: { showMap = true }, showFullNotes: mixedWork)
+                    Button { sheet = .work(next.id) } label: {
+                        Label("View stop work", systemImage: "checklist").frame(minHeight: 44)
+                    }.accessibilityIdentifier("viewStopWork")
+                }
+            }
+            .padding(16)
+            .background(Theme.panel, in: UnevenRoundedRectangle(bottomLeadingRadius: 22, bottomTrailingRadius: 22))
+        } map: {
+            RouteMapView(snapshot: snapshot, planState: planState, selectedStopID: $selectedStopID, bottomInset: 0, delivering: true)
+                .overlay(alignment: .trailing) {
+                    StopStrip(snapshot: snapshot, selectedStopID: $selectedStopID, all: { showStops = true }, details: { sheet = .stop($0) })
+                        .padding(.trailing, 8)
+                }
+        } bottom: {
+            VStack(alignment: .leading, spacing: 8) {
+                if let toast = toasts.current, !showStops, outcomeSheet == nil, photoFor == nil {
+                    UndoToast(message: toast.message, symbol: toast.symbol, tone: toast.tone, undo: toasts.undoAction(for: toast), extra: toast.extraTitle.flatMap { title in toast.extra.map { (title, $0) } })
+                }
+                if let id = returnedFromNavigation, let stop = snapshot.stops.first(where: { $0.id == id }), snapshot.ledger.stopStatus(stop, packages: snapshot.packages) != .completed {
+                    Banner(symbol: "arrow.uturn.backward.circle", text: "Back from navigation. Record what happened at \(stop.address.streetLine ?? "this stop") — nothing was marked automatically.", tone: .info)
+                        .accessibilityIdentifier("returnBanner")
+                    if next?.id != id {
+                        Button { sheet = .work(id) } label: {
+                            Text("View unfinished stop work").frame(minHeight: 44)
+                        }.accessibilityIdentifier("returnedStopWork")
                     }
                 }
-                .padding(.horizontal, Theme.Space.l)
-                .padding(.bottom, Theme.Space.l)
+                if let next, mixedWork {
+                    StopWorkContent(snapshot: snapshot, stop: next)
+                } else if next != nil {
+                    PackageSelectionList(packages: open, deselected: $deselected)
+                } else if snapshot.stops.isEmpty {
+                    StateMessageView(symbol: "shippingbox", title: "No stops on this route", message: "Add stops to begin delivering.", actions: [.init(title: "Add stops", symbol: "plus") { sheet = .addStops }])
+                } else {
+                    AllDoneCard(snapshot: snapshot) { confirmFinish = true }
+                }
             }
+            .padding(16)
+            .background(Theme.panel, in: UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22))
+        } actions: { collapsed in
             if let next {
-                DeliveryActionBar(
-                    destination: [next.address.streetLine ?? next.address.singleLine, next.address.unitLabel].compactMap { $0 }.joined(separator: " · "),
-                    canNavigate: NavigationLauncher.canNavigate(to: next),
-                    navigate: { navigate(to: next) },
-                    delivered: { act(.delivered, at: next) },
-                    failed: { act(.failed, at: next) },
-                    skip: { act(.skipped, at: next) }
-                )
+                if mixedWork {
+                    Button { navigate(to: next) } label: { Label("Navigate", systemImage: "location").frame(maxWidth: .infinity, minHeight: 44) }
+                        .buttonStyle(SecondaryButtonStyle()).disabled(!NavigationLauncher.canNavigate(to: next))
+                        .accessibilityIdentifier("navigate").padding(.horizontal, 16).padding(.bottom, 8)
+                } else {
+                ActionDeck(destination: [next.address.streetLine ?? next.address.singleLine, next.address.unitLabel].compactMap { $0 }.joined(separator: " · "), collapsed: collapsed, selectedCount: chosen.count, totalCount: open.count,
+                    canNavigate: NavigationLauncher.canNavigate(to: next), navigate: { navigate(to: next) },
+                    delivered: { record(.delivered, at: next, packageIDs: chosen) },
+                    failed: { if !chosen.isEmpty { outcomeSheet = .failure(next, chosen) } },
+                    skip: { act(.skipped, at: next) })
+                }
             }
+        }
+        .fullScreenCover(isPresented: $showMap) {
+            NavigationStack {
+                RouteMapView(snapshot: snapshot, planState: planState, selectedStopID: $selectedStopID, bottomInset: 0, delivering: true)
+                    .navigationTitle("Route map")
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Close") { showMap = false } } }
+            }
+        }
+        .sheet(isPresented: $showStops) {
+            StopsSheet(snapshot: snapshot, detail: { id in showStops = false; sheet = .stop(id) }, replan: { showStops = false; sheet = .optimize }, finish: { showStops = false; confirmFinish = true }, backToPlanning: { showStops = false; backToPlanning() })
         }
         .sheet(item: $outcomeSheet) { item in
             switch item {
@@ -121,17 +141,17 @@ struct DeliveryPanel: View {
             Button("Google Maps") { if let s = choosingNavApp { launch(s, .googleMaps) } }
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog("Finish this route?", isPresented: $confirmFinish, titleVisibility: .visible) {
-            Button("Finish route") { services.store.finish(snapshot); toasts.show("Route finished. Find it in History.", symbol: "flag.checkered", tone: .success) }
-            Button("Keep delivering", role: .cancel) {}
-        } message: {
-            let s = snapshot.summary()
-            Text(s.pending + s.skipped > 0 ? "\(s.pending + s.skipped) package(s) are not delivered. They stay on record as not handled." : "All packages have an outcome.")
+        .sheet(isPresented: $confirmFinish) {
+            ExecutionFinishSheet(snapshot: snapshot) {
+                guard services.store.finish(snapshot, confirmOutstandingWork: true).isCommitted else { return false }
+                toasts.show("Route finished. Find it in History.", symbol: "flag.checkered", tone: .success)
+                return true
+            }
         }
         .alert("Couldn't open navigation", isPresented: Binding(get: { navError != nil }, set: { if !$0 { navError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(navError ?? "") }
-        .onChange(of: snapshot.nextStop()?.id, initial: true) { _, id in selectedStopID = id }
+        .onChange(of: snapshot.nextStop()?.id, initial: true) { _, id in selectedStopID = id; deselected = [] }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, let handoff = services.navigation.lastHandoff, handoff.routeID == snapshot.route.id else { return }
             if Date().timeIntervalSince(handoff.at) < 6 * 3600 { returnedFromNavigation = handoff.stopID; selectedStopID = handoff.stopID }
@@ -168,250 +188,253 @@ struct DeliveryPanel: View {
         }
     }
 
-    private func record(_ kind: OutcomeKind, at stop: Stop, packageIDs: [PackageID], reason: FailureReason? = nil, note: String? = nil) {
-        guard !packageIDs.isEmpty else { return }
+    @discardableResult
+    private func record(_ kind: OutcomeKind, at stop: Stop, packageIDs: [PackageID], reason: FailureReason? = nil, note: String? = nil) -> Bool {
+        guard !packageIDs.isEmpty else { return false }
         let label = "\(kind == .delivered ? "Delivered" : kind == .failed ? "Failed" : "Skipped") \(stop.address.streetLine ?? "stop")"
         let ids = services.store.record(kind, packageIDs: packageIDs, stopID: stop.id, reason: reason, note: note, in: snapshot, label: label)
+        guard !ids.isEmpty else {
+            toasts.show(services.store.persistenceIssue ?? "No new outcome was recorded. Review the current work and sync status.", symbol: "exclamationmark.triangle", tone: .warning)
+            return false
+        }
+        deselected = []
         if returnedFromNavigation == stop.id { returnedFromNavigation = nil; services.navigation.clearHandoff() }
         switch kind {
         case .delivered: Haptics.success()
         case .failed: Haptics.warning()
         default: Haptics.tap()
         }
-        let message = packageIDs.count > 1 ? "\(label) · \(packageIDs.count) packages" : label
-        toasts.show(message, symbol: kind == .delivered ? "checkmark.circle.fill" : kind == .failed ? "xmark.octagon.fill" : "arrow.uturn.forward.circle.fill", tone: kind == .delivered ? .success : kind == .failed ? .danger : .warning, undo: {
-            services.store.undo(outcomeIDs: ids, in: snapshot)
+        let openCount = snapshot.packages(for: stop.id).filter { !snapshot.ledger.status(of: $0.id).isHandled }.count
+        let message = kind == .delivered && packageIDs.count < openCount ? "Delivered \(packageIDs.count) of \(openCount) at \(stop.address.streetLine ?? "stop")" : packageIDs.count > 1 ? "\(label) · \(packageIDs.count) packages" : label
+        toasts.show(message, symbol: kind == .delivered ? "checkmark.circle.fill" : kind == .failed ? "xmark.octagon.fill" : "arrow.uturn.forward.circle.fill", tone: kind == .delivered ? .success : kind == .failed ? .danger : .warning, undoAcknowledged: {
+            guard services.store.undo(outcomeIDs: ids, in: snapshot).isCommitted else { return false }
             Haptics.tap()
+            return true
         }, extraTitle: kind == .delivered ? "Photo" : nil, extra: kind == .delivered ? { photoFor = PhotoTarget(stopID: stop.id, packageIDs: packageIDs) } : nil)
-    }
-}
-
-struct ProgressHeader: View {
-    var summary: RouteSummary
-
-    var body: some View {
-        let handled = summary.delivered + summary.failed + summary.excluded
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            ProgressView(value: Double(handled), total: Double(max(summary.packageCount, 1)))
-                .tint(Theme.success)
-            HStack {
-                Text("\(handled) of \(summary.packageCount) packages handled").font(.subheadline.weight(.semibold))
-                Spacer()
-                if summary.failed > 0 { Label("\(summary.failed)", systemImage: "xmark.octagon").foregroundStyle(Theme.danger).font(.subheadline).accessibilityLabel("\(summary.failed) failed") }
-                if summary.skipped > 0 { Label("\(summary.skipped)", systemImage: "arrow.uturn.forward").foregroundStyle(Theme.warning).font(.subheadline).accessibilityLabel("\(summary.skipped) skipped") }
-            }
-        }
-        .padding(.top, Theme.Space.s)
-        // Secondary to the stop itself: capped so the address keeps the space at large text sizes.
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// The next stop: everything the driver needs, large and legible.
-struct NextStopInfo: View {
-    var stop: Stop
-    var number: Int
-    var total: Int
-    var packages: [Package]
-    var ledger: DeliveryLedger
-    var visit: PlannedVisit?
-    var timeZone: TimeZone
-    var details: () -> Void
-
-    var body: some View {
-        let open = packages.filter { !ledger.status(of: $0.id).isHandled }
-        VStack(alignment: .leading, spacing: Theme.Space.m) {
-            HStack {
-                Text("Stop \(number) of \(total)").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer()
-                if let visit { Text("ETA \(DisplayFormat.time(visit.arrival, timeZone: timeZone))").font(.subheadline.monospacedDigit()).foregroundStyle(.secondary) }
-            }
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-            Button(action: details) {
-                VStack(alignment: .leading, spacing: Theme.Space.s) {
-                    if let unit = stop.address.unitLabel { UnitBadge(label: unit) }
-                    Text(stop.address.streetLine ?? stop.address.singleLine)
-                        .font(.address)
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("nextStopAddress")
-                    Text([stop.address.municipality, stop.address.province?.rawValue, stop.address.postalCode].compactMap { $0 }.joined(separator: " "))
-                        .font(.body).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.row)
-            .accessibilityHint("Shows stop details")
-
-            if let w = stop.timeWindow {
-                Label(w.explanation, systemImage: w.kind == .hard ? "clock.badge.exclamationmark" : "clock").font(.subheadline).foregroundStyle(Theme.brand)
-            }
-            if stop.addressStatus != .verified {
-                StatusBadge(text: stop.addressStatus.label, symbol: stop.addressStatus.symbol, tone: stop.addressStatus.tone)
-            }
-            if !stop.notes.isEmpty {
-                Label { Text(stop.notes).fixedSize(horizontal: false, vertical: true) } icon: { Image(systemName: "note.text") }
-                    .font(.body)
-                    .padding(Theme.Space.m)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.Radius.m))
-            }
-
-            VStack(alignment: .leading, spacing: Theme.Space.s) {
-                Text("\(open.count) package\(open.count == 1 ? "" : "s") to deliver").font(.headline)
-                ForEach(packages) { p in
-                    let status = ledger.status(of: p.id)
-                    HStack(spacing: Theme.Space.s) {
-                        Image(systemName: status.symbolName).foregroundStyle(status.tone.color).accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(p.storageLocation.map { "In: \($0)" } ?? "Location in vehicle not set")
-                                .font(.body.weight(p.storageLocation == nil ? .regular : .semibold))
-                                .foregroundStyle(p.storageLocation == nil ? .secondary : .primary)
-                            Text([p.trackingID.map { "…" + String($0.suffix(6)) }, p.size?.label, p.recipientName, status == .pending ? nil : status.label].compactMap { $0 }.joined(separator: " · "))
-                                .font(.caption).foregroundStyle(.secondary)
-                            if !p.notes.isEmpty {
-                                Label(p.notes, systemImage: "note.text")
-                                    .font(.subheadline)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-            }
-        }
-        .card()
-    }
-}
-
-/// Delivery actions, pinned at the bottom of the panel so they are always within thumb reach.
-/// Delivered is the largest and lowest control.
-struct DeliveryActionBar: View {
-    var destination: String
-    var canNavigate: Bool
-    var navigate: () -> Void
-    var delivered: () -> Void
-    var failed: () -> Void
-    var skip: () -> Void
-
-    var body: some View {
-        VStack(spacing: Theme.Space.s) {
-            Text(destination)
-                .font(.subheadline.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                .accessibilityIdentifier("actionDestination")
-            HStack(spacing: Theme.Space.s) {
-                Button(action: navigate) { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill") }
-                    .buttonStyle(CompactActionStyle(tint: Theme.brand))
-                    .disabled(!canNavigate)
-                    .accessibilityIdentifier("navigate")
-                Button(action: failed) { Label("Failed", systemImage: "xmark.octagon") }
-                    .buttonStyle(CompactActionStyle(tint: Theme.danger))
-                    .accessibilityIdentifier("failed")
-                Button(action: skip) { Label("Skip", systemImage: "arrow.uturn.forward") }
-                    .buttonStyle(CompactActionStyle(tint: Theme.neutral))
-                    .accessibilityIdentifier("skip")
-            }
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-            .accessibilityShowsLargeContentViewer()
-            Button(action: delivered) {
-                Label("Delivered", systemImage: "checkmark.circle.fill")
-            }
-            .buttonStyle(PrimaryActionButtonStyle(tint: Theme.success))
-            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
-            .accessibilityIdentifier("delivered")
-        }
-        .padding(.horizontal, Theme.Space.l)
-        .padding(.top, Theme.Space.s)
-        .padding(.bottom, Theme.Space.s)
-        .background(Theme.elevated.shadow(.drop(color: .black.opacity(0.08), radius: 6, y: -2)))
-    }
-}
-
-struct CompactActionStyle: ButtonStyle {
-    var tint: Color
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.subheadline.weight(.semibold))
-            .labelStyle(.verticalCompact)
-            .frame(maxWidth: .infinity, minHeight: 52)
-            .foregroundStyle(isEnabled ? tint : Color.secondary)
-            .background(tint.opacity(isEnabled ? 0.12 : 0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .contentShape(Rectangle())
+        return true
     }
 }
 
 struct AllDoneCard: View {
-    var summary: RouteSummary
+    var snapshot: RouteSnapshot
     var finish: () -> Void
+    @Environment(AppServices.self) private var services
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
-            Label(summary.skipped > 0 ? "Only skipped stops remain" : "All stops handled", systemImage: summary.skipped > 0 ? "arrow.uturn.forward.circle" : "flag.checkered")
+            let summary = snapshot.workSummary
+            Label(summary.outstanding > 0 ? "Required work remains" : "All required work handled", systemImage: summary.outstanding > 0 ? "arrow.uturn.forward.circle" : "flag.checkered")
                 .font(.title3.weight(.semibold))
-            Text("Delivered \(summary.delivered) · Failed \(summary.failed) · Skipped \(summary.skipped) · Excluded \(summary.excluded)")
-                .font(.subheadline).foregroundStyle(.secondary)
-            if summary.skipped > 0 {
-                Text("Retry or exclude skipped packages below, or finish the route.").font(.subheadline)
+            Text("Completed \(summary.completed) · Failed \(summary.failed) · Deferred \(summary.deferred) · Excluded \(summary.excluded)")
+                .font(.subheadline).foregroundStyle(Theme.neutral)
+            if summary.pending > 0 { Text("\(summary.pending) required item(s) pending.").font(.subheadline) }
+            if summary.unsupported > 0 { Text("\(summary.unsupported) required item(s) cannot be read safely. Resolve these before finishing.").font(.subheadline).foregroundStyle(Theme.danger) }
+            if summary.deferred > 0 {
+                Text("Open Stops to review deferred work, or explicitly finish with it on record.").font(.subheadline)
             }
             Button(action: finish) { Label("Finish route", systemImage: "flag.checkered") }
                 .buttonStyle(PrimaryActionButtonStyle())
                 .accessibilityIdentifier("finishRoute")
+                .disabled(!services.store.finishReview(snapshot).canFinish)
         }
         .card()
+    }
+}
+
+/// The presentation observes persisted driver intent. It never derives execution from the scene,
+/// route status, navigation handoff, or the work reducer.
+struct ExecutionControls: View {
+    let snapshot: RouteSnapshot
+    var showStartAction = true
+    var start: () -> Void
+    @Environment(AppServices.self) private var services
+
+    var body: some View {
+        let session = services.store.executionSession(for: snapshot.route.id)
+        if let session, session.state == .active || session.state == .paused {
+            HStack(spacing: 12) {
+                Label {
+                    Text(session.state == .paused ? "Route paused" : "Route running")
+                        .accessibilityIdentifier("executionStatus")
+                } icon: {
+                    Image(systemName: session.state == .paused ? "pause.circle.fill" : "steeringwheel")
+                        .accessibilityHidden(true)
+                }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(session.state == .paused ? Theme.warning : Theme.brand)
+                Spacer(minLength: 0)
+                if session.state == .active {
+                    Button("Pause") { services.store.pauseExecution(snapshot) }
+                        .frame(minHeight: 44).accessibilityIdentifier("pauseExecution")
+                } else {
+                    Button("Resume route") { services.store.resumeExecution(snapshot) }
+                        .buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("resumeExecution")
+                }
+            }
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        } else if let current = services.store.executionSession,
+                  current.state == .active || current.state == .paused,
+                  current.routeID != snapshot.route.id {
+            Button("Return to \(current.state == .paused ? "paused" : "running") route") { services.store.returnToExecutionRoute() }
+                .frame(minHeight: 44).accessibilityIdentifier("returnToExecutionRoute")
+        } else if showStartAction {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Route not started").font(.subheadline).foregroundStyle(Theme.neutral)
+                    .accessibilityIdentifier("executionStatus")
+                Button("Start route", action: start)
+                    .buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("startDelivering")
+            }
+        }
+    }
+}
+
+/// One explicit close-out review, including the exact required obligations that stay unfinished.
+/// It records no work outcomes and uses the same WorkLedger-derived review as the store guard.
+struct ExecutionFinishSheet: View {
+    let snapshot: RouteSnapshot
+    var finish: () -> Bool
+    @Environment(AppServices.self) private var services
+    @Environment(\.dismiss) private var dismiss
+    private var live: RouteSnapshot { services.store.current?.route.id == snapshot.route.id ? services.store.current! : snapshot }
+
+    var body: some View {
+        let review = services.store.finishReview(live)
+        NavigationStack {
+            List {
+                if let issue = services.store.persistenceIssue {
+                    Section { Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger) }
+                }
+                Section("Required work") {
+                    LabeledContent("Completed", value: "\(review.summary.completed)")
+                    LabeledContent("Failed (unsuccessful)", value: "\(review.summary.failed)")
+                    LabeledContent("Excluded", value: "\(review.summary.excluded)")
+                    LabeledContent("Pending", value: "\(review.summary.pending)")
+                    LabeledContent("Deferred", value: "\(review.summary.deferred)")
+                    if review.summary.unsupported > 0 { LabeledContent("Unsupported", value: "\(review.summary.unsupported)") }
+                }
+                if !review.remaining.isEmpty {
+                    Section {
+                        ForEach(review.remaining) { item in
+                            VStack(alignment: .leading, spacing: 4) {
+                                if let stop = live.stops.first(where: { $0.id == item.stopID }) {
+                                    Text([stop.address.streetLine ?? stop.address.singleLine, stop.address.unitLabel].compactMap { $0 }.joined(separator: " · "))
+                                        .font(.headline)
+                                }
+                                Text(workTitle(item)).font(.subheadline)
+                                Text(stateLabel(item.state)).font(.subheadline.weight(.semibold)).foregroundStyle(item.state == .unsupported ? Theme.danger : Theme.warning)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    } header: { Text("Unfinished required work") }
+                    footer: { Text("These items stay unfinished on record. Finishing records no successful outcomes for them.") }
+                } else {
+                    Section { Text("All required work has an outcome. Failed work remains unsuccessful.") }
+                }
+                if review.summary.optional > 0 {
+                    Section { Text("\(review.summary.optional) optional item(s) do not block Finish.") }
+                }
+                if !review.canFinish {
+                    Section { Text("This route cannot finish until unreadable or unsupported required work is resolved.").foregroundStyle(Theme.danger) }
+                }
+            }
+            .navigationTitle("Finish this route?")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .safeAreaInset(edge: .bottom) {
+                Button("Finish route") { if finish() { dismiss() } }
+                    .buttonStyle(PrimaryButtonStyle()).disabled(!review.canFinish)
+                    .accessibilityIdentifier("confirmFinishRoute")
+                    .padding(16).background(Theme.panel)
+            }
+        }
+        .presentationDetents(review.remaining.isEmpty ? [.medium, .large] : [.large])
+    }
+
+    private func workTitle(_ item: ExecutionRemainingWork) -> String {
+        if !item.title.isEmpty { return item.title }
+        if item.kind == .delivery {
+            let task = live.workLedger.allTasks.first { $0.id == item.taskID }
+            let package = live.packages.first { $0.id == task?.packageID }
+            return ["Delivery", package?.trackingID, package?.storageLocation].compactMap { $0 }.joined(separator: " · ")
+        }
+        if item.kind == .pickup { return "Pickup" }
+        if item.kind == .checklist { return "Checklist item" }
+        return "Unsupported work"
+    }
+    private func stateLabel(_ state: WorkState) -> String {
+        switch state {
+        case .pending: return "Pending"
+        case .deferred: return "Deferred"
+        case .unsupported: return "Unsupported — review required"
+        case .completed: return "Completed"
+        case .failed: return "Failed (unsuccessful)"
+        case .excluded: return "Excluded"
+        }
     }
 }
 
 /// Skipped and failed packages stay visible until the driver deliberately retries or excludes them.
 struct NeedsDecisionSection: View {
     let snapshot: RouteSnapshot
+    var openWork: ((StopID) -> Void)? = nil
     @Environment(AppServices.self) private var services
     @Environment(ToastCenter.self) private var toasts
-
+    private func needsDecision(_ package: Package) -> Bool {
+        switch snapshot.ledger.status(of: package.id) { case .skipped, .failed: true; default: false }
+    }
     var body: some View {
-        let ledger = snapshot.ledger
-        let items = snapshot.packages.compactMap { p -> (Package, PackageStatus, Stop)? in
-            let s = ledger.status(of: p.id)
-            guard let stop = snapshot.stops.first(where: { $0.id == p.stopID }) else { return nil }
-            switch s {
-            case .skipped, .failed: return (p, s, stop)
-            default: return nil
-            }
-        }
-        if !items.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.Space.s) {
-                Text("Needs a decision").font(.headline)
-                ForEach(items, id: \.0.id) { package, status, stop in
-                    VStack(alignment: .leading, spacing: Theme.Space.s) {
-                        HStack {
-                            StatusBadge(text: status.label, symbol: status.symbolName, tone: status.tone, compact: true)
-                            Text(stop.address.streetLine ?? "Stop").font(.subheadline.weight(.semibold))
-                            if let u = stop.address.unitLabel { Text(u).font(.subheadline).foregroundStyle(Theme.teal) }
+        let stops = snapshot.orderedStops.filter { snapshot.packages(for: $0.id).contains(where: needsDecision) }
+        if !stops.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Needs a decision").font(.footnote.bold()).tracking(0.4).foregroundStyle(Theme.neutral)
+                ForEach(stops) { stop in
+                    let packages = snapshot.packages(for: stop.id).filter(needsDecision)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .top, spacing: 12) {
+                            StopBadge(number: (snapshot.orderedStops.firstIndex { $0.id == stop.id } ?? 0) + 1, state: .make(stop: stop, snapshot: snapshot))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text([stop.address.streetLine, stop.address.unitLabel].compactMap { $0 }.joined(separator: " · ")).font(.headline)
+                                Text(Array(Set(packages.map { snapshot.ledger.status(of: $0.id).label })).sorted().joined(separator: " · ") + " · \(packages.count) packages").font(.subheadline).foregroundStyle(Theme.danger)
+                            }
                         }
-                        HStack {
-                            Button("Retry later") { decide(.requeued, package, stop, "Back on the route") }.buttonStyle(SecondaryButtonStyle())
-                            Button("Exclude") { decide(.excluded, package, stop, "Excluded from this route") }.buttonStyle(SecondaryButtonStyle())
+                        HStack(spacing: 8) {
+                            Button("Retry later") { decide(.requeued, packages, stop, "Back on the route") }.buttonStyle(ActionButtonStyle(tint: Theme.brand, fill: Theme.brandSoft))
+                            Button("Exclude") { decide(.excluded, packages, stop, "Excluded from this route") }.buttonStyle(ActionButtonStyle())
                         }
                     }
-                    .padding(.vertical, Theme.Space.xs)
                 }
             }
-            .card()
+        }
+        let independent = snapshot.workLedger.allTasks.filter { task in
+            task.kind != .delivery && { switch snapshot.workLedger.status(of: task.id) { case .failed, .deferred, .unsupported: true; default: false } }()
+        }
+        if !independent.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Pickup & checklist work to review").font(.headline)
+                ForEach(snapshot.orderedStops.filter { stop in independent.contains { $0.stopID == stop.id } }) { stop in
+                    Button {
+                        openWork?(stop.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text([stop.address.streetLine, stop.address.unitLabel].compactMap { $0 }.joined(separator: " · ")).font(.headline)
+                            ForEach(independent.filter { $0.stopID == stop.id }) { task in
+                                let state = snapshot.workLedger.status(of: task.id)
+                                Text(task.title + " · " + (state == .unsupported ? "Unsupported — review required" : { if case .deferred = state { "Deferred — unfinished" } else { "Failed — unsuccessful" } }()))
+                                    .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }.buttonStyle(.row).accessibilityIdentifier("reviewStopWork.\(stop.id)")
+                }
+            }
         }
     }
-
-    private func decide(_ kind: OutcomeKind, _ package: Package, _ stop: Stop, _ message: String) {
-        let ids = services.store.record(kind, packageIDs: [package.id], stopID: stop.id, in: snapshot, label: message)
-        toasts.show(message, symbol: kind == .requeued ? "arrow.counterclockwise" : "minus.circle", tone: .neutral) {
-            services.store.undo(outcomeIDs: ids, in: snapshot)
+    private func decide(_ kind: OutcomeKind, _ packages: [Package], _ stop: Stop, _ message: String) {
+        let ids = services.store.record(kind, packageIDs: packages.map(\.id), stopID: stop.id, in: snapshot, label: message)
+        guard !ids.isEmpty else {
+            toasts.show(services.store.persistenceIssue ?? "No new outcome was recorded. Review the current work.", symbol: "exclamationmark.triangle", tone: .warning)
+            return
         }
+        toasts.show(message, symbol: kind == .requeued ? "arrow.counterclockwise" : "minus.circle", tone: .neutral, undoAcknowledged: { services.store.undo(outcomeIDs: ids, in: snapshot).isCommitted })
     }
 }
 
@@ -420,7 +443,8 @@ struct PackageOutcomeSheet: View {
     var stop: Stop
     var packages: [Package]
     var kind: OutcomeKind
-    var onDone: ([PackageID], FailureReason?) -> Void
+    var onDone: ([PackageID], FailureReason?) -> Bool
+    @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
     @State private var chosen: Set<PackageID> = []
     @State private var reason: FailureReason?
@@ -428,6 +452,9 @@ struct PackageOutcomeSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if let issue = services.store.persistenceIssue {
+                    Section { Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger) }
+                }
                 Section {
                     Button(kind == .delivered ? "Deliver all \(packages.count)" : "All \(packages.count) failed") {
                         chosen = Set(packages.map(\.id))
@@ -443,7 +470,7 @@ struct PackageOutcomeSheet: View {
                                 Image(systemName: chosen.contains(p.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(Theme.brand)
                                 VStack(alignment: .leading) {
                                     Text(p.storageLocation ?? "Package").font(.body.weight(.semibold))
-                                    Text([p.trackingID, p.size?.label, p.recipientName].compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                                    Text([p.trackingID, p.size?.label, p.recipientName].compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(Theme.neutral)
                                 }
                             }
                             .frame(minHeight: Theme.minTouch)
@@ -463,7 +490,7 @@ struct PackageOutcomeSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onDone(Array(chosen), reason); dismiss() }
+                    Button("Save") { if onDone(Array(chosen), reason) { dismiss() } }
                         .disabled(chosen.isEmpty || (kind == .failed && reason == nil))
                         .accessibilityIdentifier("savePackageOutcome")
                 }
@@ -475,7 +502,10 @@ struct PackageOutcomeSheet: View {
 }
 
 struct FailureReasonSheet: View {
-    var onDone: (FailureReason, String?) -> Void
+    var title = "Delivery failed"
+    var prompt = "Why couldn't it be delivered?"
+    var onDone: (FailureReason, String?) -> Bool
+    @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
     @State private var reason: FailureReason?
     @State private var note = ""
@@ -483,16 +513,19 @@ struct FailureReasonSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Why couldn't it be delivered?") { ReasonGrid(selection: $reason) }
+                if let issue = services.store.persistenceIssue {
+                    Section { Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger) }
+                }
+                Section(prompt) { ReasonGrid(selection: $reason) }
                 Section("Note (optional)") { TextField("e.g. Gate code not working", text: $note, axis: .vertical) }
             }
-            .navigationTitle("Delivery failed")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { if let reason { onDone(reason, note); dismiss() } }
-                        .disabled(reason == nil)
+                    Button("Save") { if let reason, onDone(reason, note) { dismiss() } }
+                        .disabled(reason == nil || note.count > 500)
                         .accessibilityIdentifier("saveFailure")
                 }
             }
@@ -515,7 +548,7 @@ struct ReasonGrid: View {
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: Theme.minTouch + 8, alignment: .leading)
                         .padding(.horizontal, Theme.Space.s)
-                        .foregroundStyle(selection == r ? .white : Theme.danger)
+                        .foregroundStyle(selection == r ? Theme.onBrand : Theme.danger)
                         .background(selection == r ? Theme.danger : Theme.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: Theme.Radius.m))
                 }
                 .buttonStyle(.plain)

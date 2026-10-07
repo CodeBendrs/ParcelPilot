@@ -21,7 +21,7 @@ struct PackageFinderView: View {
         NavigationStack {
             List {
                 if query.isEmpty {
-                    Text("Search by tracking number, last digits, recipient, street or vehicle location (e.g. “B3”).").font(.subheadline).foregroundStyle(.secondary)
+                    Text("Search by tracking number, last digits, recipient, street or vehicle location (e.g. “B3”).").font(.subheadline).foregroundStyle(Theme.neutral)
                 } else if matches.isEmpty {
                     StateMessageView(symbol: "shippingbox", title: "No match", message: "This package isn't on the open route. Check the route, or add it by scanning the label.")
                 }
@@ -36,7 +36,7 @@ struct PackageFinderView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(p.storageLocation.map { "In vehicle: \($0)" } ?? "Vehicle location not set").font(.headline).foregroundStyle(.primary)
                                 Text([stop?.address.streetLine, stop?.address.unitLabel].compactMap { $0 }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.primary)
-                                Text([p.trackingID, p.recipientName, ledger.status(of: p.id).label].compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                                Text([p.trackingID, p.recipientName, ledger.status(of: p.id).label].compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(Theme.neutral)
                                 if stop == nil { Text("Its stop was removed — remove or re-add this package.").font(.caption).foregroundStyle(Theme.warning) }
                             }
                         }
@@ -149,7 +149,7 @@ struct PODCaptureView: View {
                     Image(systemName: "camera.on.rectangle").font(.system(size: 44)).foregroundStyle(Theme.brand)
                     Text("Proof-of-delivery photo").font(.title3.weight(.semibold))
                     Text(services.mode.isDemo ? "Demo mode: the photo stays on this iPhone." : "Saved on this iPhone first, then uploaded securely to your account — even if you're offline now.")
-                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .font(.subheadline).foregroundStyle(Theme.neutral).multilineTextAlignment(.center)
                     if CameraCaptureView.isAvailable {
                         Button { showCamera = true } label: { Label("Take photo", systemImage: "camera") }.buttonStyle(PrimaryActionButtonStyle())
                     }
@@ -209,7 +209,7 @@ struct PhotosSection: View {
                     }
                     VStack(alignment: .leading) {
                         Text("Waiting to upload").font(.subheadline.weight(.semibold))
-                        Text(p.lastError ?? "Saved on this iPhone").font(.caption).foregroundStyle(.secondary)
+                        Text(p.lastError ?? "Saved on this iPhone").font(.caption).foregroundStyle(Theme.neutral)
                     }
                 }
                 .swipeActions { Button("Delete", role: .destructive) { services.photos.deletePending(p.id) } }
