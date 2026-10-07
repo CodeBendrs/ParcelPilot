@@ -1,5 +1,125 @@
 # ParcelPilot simulator audit — October 4, 2026
 
+## Atlas Focus redesign — current pass
+
+Implemented [the complete handoff](redesign/atlas-focus/HANDOFF.md) in its §14 order. The changes
+are confined to SwiftUI presentation, presentation strings, UI tests, the screenshot harness and
+these design/evidence documents. ParcelPilotKit, domain models, service implementations, Cloud
+Functions, security rules, seed data, official authentication controls and the app icon are unchanged.
+
+### Phase review
+
+| Phase | Comparison and result |
+|---|---|
+| 1. Tokens/components | Exact light/dark tokens, Dynamic Type, unit/location tiles, semantic stop badges, separate stop/package counts and sync state. Contrast ratios are recorded in DESIGN.md. |
+| 2. FocusLayout/Delivering | H03/H04/H08: fixed regions, hidden workspace tabs, inline package selection, StopStrip, Stops sheet and a pinned collapsed-map action deck. No panel handle or mode picker remains. |
+| 3. Planning | H01/H02: Map/Full list scene preference, review row, ordered list, explicit Edit order, Scan/Add and adaptive Optimize/Start delivering. Current-order travel figures are not invented. |
+| 4. Optimization | H07: Proposed/Current map, original validated proposal metrics and position changes, equal-weight Keep/Use. Savings still require a computed current-order baseline. |
+| 5. Review/Scan | H05/H06: review map/Place pin, three separate signals, persistent field captions, pinned Add/review action; target route menu, Batch hint, Import/Light/Shutter/Type and Undo. |
+| 6. Remaining screens | Shared tokens and native controls applied to stop details, Routes, History, Settings and sign-in. Visible package/stop removal and confirmations remain. |
+| 7. Docs/evidence | DESIGN.md updated; expanded screenshot harness captures ten states per configuration. Final matrix and emulator verification are recorded below. |
+
+The reference addresses, counts, map artwork and camera photograph are design examples. The app
+uses its existing synthetic fixtures and native provider map, camera and picker surfaces. Text in
+HANDOFF.md takes precedence over any conflicting mockup detail.
+
+### Current verification
+
+- `scripts/run-all-tests.sh`: 93 domain, 42 Functions unit, 21 rules and 30 Functions integration
+  tests passed. The initial UI run found three obsolete control/visibility assumptions; the test
+  lookups were corrected while keeping saved-address, persisted-order and outcome assertions.
+- `Atlas-Final-Verified-iOS.xcresult`: successful final full iOS run; 23 app tests executed
+  (7 SDK emulator tests deferred to their dedicated run), all 21 driver UI workflows passed,
+  including the native Photos/Vision, Files CSV and proof-of-delivery fixtures. The screenshot-only
+  helper and three emulator UI tests were deferred to their dedicated runs.
+- `Atlas-Fixtures-and-Map.xcresult`: all five passed — real Vision label import into an existing
+  unit, native Files CSV import/error selection, proof-of-delivery photo viewing/removal, strip
+  inspection without changing the next delivery, and large-text actions. This build includes the
+  later FocusLayout measurement, toast placement, top search field and map-framing refinements.
+- `Screens-1791146631-*.xcresult`: all eight screenshot runs passed and exported all 80 expected
+  PNGs — ten states on each of SE (3rd generation) / Pro Max × light / dark × Large / AX3.
+  Every configuration was visually reviewed against H01–H08; representative native captures are
+  linked below. The complete matrix is retained locally in `build/screens/`.
+- `EmulatorE2E-1791153235.xcresult`: seven SDK emulator tests and all three UI flows passed —
+  address suggestions, email verification/sign-out/wrong-password rejection/sign-in, and
+  import → optimize → apply → deliver → synced. The unchanged server verification script then
+  passed all nine checks for the UI route, including persisted stops, honest review status,
+  synced delivery outcome, current input revision and labelled emulator optimization provider.
+- `Atlas-Map-Final.xcresult`: both final map-inspection and AX3 delivery/full-screen-map checks
+  passed after the last marker refinements. Exported captures show that the selected pending pin
+  stays pending, the destination remains Stop 1, and native map attribution is visible.
+- The handoff's unsigned `xcodebuild … build CODE_SIGNING_ALLOWED=NO` command succeeded on
+  iPhone 17. `git diff --check` is clean; protected Kit, backend, rules, model and service source
+  has no changes. Literal accessibility identifier comparison removes only `workspaceMode` and
+  `panelHandle`, as explicitly required by §13.
+
+Runs use Xcode 27 and iOS 26.5. Reproduce the verified matrix with
+`DEVICES='Atlas iPhone SE' scripts/capture-screenshots.sh` and emulator verification with
+`SIMULATOR='Atlas iPhone 17' scripts/run-emulator-e2e.sh`. Fresh simulators were created after an
+older simulator stalled in native CoreLocation initialization; the old simulator data was preserved.
+The emulator harness installs the test build and grants simulator location permission before launch.
+UI helpers dismiss native first-use typing/password prompts so those prompts cannot intercept app
+controls. The suggestion fixture has no municipality, so its correct review title is Review address;
+saved street, civic number and loading-state assertions remain intact.
+
+### Safeguard evidence
+
+Only Use this order calls the existing proposal-apply operation; Keep/Close leave order untouched.
+UI regressions cover navigation return without a delivery, required failure reason and cancellation,
+partial selection/remaining package, delivery/failure/skip/retry/exclude Undo, stop/package removal
+Undo, explicit early finish, driver pin/address editing and offline termination/relaunch. Unit tests
+cover the existing intake signals, pin-navigation precedence and scan-add Undo operations. The
+account confirmation and unsynced-data warning implementations are unchanged.
+
+Every matching §13 control retains its identifier. The removed controls are replaced as specified:
+workspaceMode → startDelivering/backToPlanning, panelHandle → fixed layout, Delivered modal package
+selection → packageToggle.N + delivered. Existing tests now find the address through its combined
+button element and open Stops for route decisions; they continue checking real persisted results.
+
+### Visual review and refreshed screenshots
+
+The compact screen collapses the map when its remaining height is below 160 pt, including with the
+demo destination at Large. At AX3, the full header and package locations scroll; the action deck
+always repeats the street and unit. Delivered uses two lines when needed, without splitting words
+or digits. Show map provides the native map separately. On Pro Max at Large, the map frames the
+driver, current stop and next two stops, reserving the strip's width rather than zooming to the
+current pin alone. Native provider attribution remains visible.
+
+The review form keeps the map, Place pin and footer available while the three separate checks and
+fields scroll. Scanner fallback text also scrolls inside its panel. Stops uses a top search field
+and reserves space for Undo; toasts do not cover search, navigation or delivery actions. Manual
+entry provides Done typing in the navigation bar so Continue can be reached with AX3 text.
+
+| Reference | Refreshed native capture |
+|---|---|
+| H01 — Planning map | [Pro Max, light, Large](audit-atlas-focus-2026-10-04/01-planning-map.png) |
+| H02 — Planning list | [Pro Max, light, Large](audit-atlas-focus-2026-10-04/02-planning-list.png) |
+| H03 — Delivering | [Pro Max, light, Large](audit-atlas-focus-2026-10-04/03-delivering.png) |
+| H04 — Collapsed map / large text | [SE, light, AX3](audit-atlas-focus-2026-10-04/04-delivering-ax3.png) |
+| H05 — Scan | [Pro Max, light, Large](audit-atlas-focus-2026-10-04/05-scan.png), [SE, dark, AX3](audit-atlas-focus-2026-10-04/11-scan-ax3-dark.png) |
+| H06 — Address review | [Pro Max, light, Large](audit-atlas-focus-2026-10-04/06-address-review.png), [SE, light, AX3](audit-atlas-focus-2026-10-04/10-address-review-ax3.png) |
+| H07 — Proposed order | [Pro Max, dark, Large](audit-atlas-focus-2026-10-04/07-optimization-dark.png) |
+| H08 — Stops | [Pro Max, light, Large](audit-atlas-focus-2026-10-04/08-stops.png) |
+| Partial delivery | [Pro Max, dark, Large](audit-atlas-focus-2026-10-04/09-partial-dark.png) |
+| Settings | [SE, light, AX3](audit-atlas-focus-2026-10-04/12-settings-ax3.png) |
+| Final pending-stop inspection | [iPhone 17, light, Large](audit-atlas-focus-2026-10-04/13-map-inspection.png) |
+| Final full-screen map | [iPhone 17, light, AX3](audit-atlas-focus-2026-10-04/14-full-screen-map-ax3.png) |
+
+### Evidence limits
+
+Simulator captures establish visible layout and provider attribution; code checks establish target
+sizes, combined labels, sort priorities, selected traits, Reduce Motion and the extended Undo timeout.
+Full VoiceOver/Switch Control traversal, physical camera/torch, live production routing, real-world
+navigation and production OAuth still require device verification. No production deployment or
+cloud-data writes were made.
+
+---
+
+## Earlier audit — before Atlas Focus
+
+The following evidence describes the earlier UI and is retained for provenance. Its panel, mode
+picker, screenshots and validation counts do not describe the current Atlas implementation.
+
 The tested driver journey is easier to use after fixing hidden actions, broken cancellation,
 route reopening and navigation to driver-placed pins. The existing four-tab structure stays:
 Route, Scan, History and Settings. This audit verifies synthetic driver workflows; it does not

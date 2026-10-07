@@ -10,6 +10,7 @@ for DEVICE in "${DEVICES:-PP iPhone SE}" "iPhone 17 Pro Max"; do
   mkdir -p "$OUT"
   xcrun simctl boot "$DEVICE" 2>/dev/null || true
   xcrun simctl bootstatus "$DEVICE" -b >/dev/null
+  xcrun simctl location "$DEVICE" set 48.4284,-123.3656
   for APPEARANCE in light dark; do
     xcrun simctl ui "$DEVICE" appearance "$APPEARANCE"
     for SIZE in large accessibility-extra-large; do
@@ -22,7 +23,7 @@ for DEVICE in "${DEVICES:-PP iPhone SE}" "iPhone 17 Pro Max"; do
         -destination "platform=iOS Simulator,name=$DEVICE" \
         -derivedDataPath "$ROOT/build/DerivedData.noindex" \
         -only-testing:ParcelPilotUITests/DriverFlowUITests/testPrimaryScreensForScreenshotAudit \
-        -collect-test-diagnostics never -enableCodeCoverage NO -resultBundlePath "$RESULT" \
+        -parallel-testing-enabled NO -collect-test-diagnostics never -enableCodeCoverage NO -resultBundlePath "$RESULT" \
         CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= > "$RESULT.log" 2>&1
       xcrun xcresulttool export attachments --path "$RESULT" --output-path "$ATTACHMENTS" >/dev/null
       python3 - "$ATTACHMENTS" "$OUT" "$APPEARANCE" "$SIZE" <<'PY'
@@ -38,7 +39,7 @@ for test in json.loads((source / 'manifest.json').read_text()):
             state = name.split('_', 1)[0].removeprefix('matrix-')
             shutil.copyfile(source / attachment['exportedFileName'], output / f'{state}-{appearance}-{size}.png')
             written.add(state)
-expected = {'plan', 'deliver', 'scan', 'history', 'settings'}
+expected = {'plan', 'plan-list', 'deliver', 'partial', 'stops', 'optimize', 'address-review', 'scan', 'history', 'settings'}
 if written != expected:
     raise SystemExit(f'Missing screenshots: {expected - written}')
 PY

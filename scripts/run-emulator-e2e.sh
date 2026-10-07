@@ -36,8 +36,16 @@ xcrun simctl uninstall "$SIM" "$BUNDLE" 2>/dev/null || true
 xcrun simctl keychain "$SIM" reset
 xcrun simctl location "$SIM" set 48.4284,-123.3656
 
-TEST_RUNNER_PP_EMULATOR=1 xcodebuild test -project "$ROOT/ParcelPilot.xcodeproj" -scheme ParcelPilot \
+xcodebuild build-for-testing -project "$ROOT/ParcelPilot.xcodeproj" -scheme ParcelPilot \
   -destination "platform=iOS Simulator,name=$SIM" -derivedDataPath "$ROOT/build/DerivedData.noindex" \
+  -enableCodeCoverage NO CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+  > "$ROOT/build/emulator-build.log" 2>&1
+xcrun simctl install "$SIM" "$ROOT/build/DerivedData.noindex/Build/Products/Debug-iphonesimulator/ParcelPilot.app"
+xcrun simctl privacy "$SIM" grant location "$BUNDLE"
+
+TEST_RUNNER_PP_EMULATOR=1 xcodebuild test-without-building -project "$ROOT/ParcelPilot.xcodeproj" -scheme ParcelPilot \
+  -destination "platform=iOS Simulator,name=$SIM" -derivedDataPath "$ROOT/build/DerivedData.noindex" \
+  -parallel-testing-enabled NO -collect-test-diagnostics never -enableCodeCoverage NO \
   -only-testing:ParcelPilotTests/FirestoreBackendEmulatorTests \
   -only-testing:ParcelPilotUITests/EmulatorEndToEndUITests \
   -resultBundlePath "$ROOT/build/results.noindex/EmulatorE2E-$(date +%s).xcresult" \

@@ -15,7 +15,31 @@ final class DriverFlowUITests: XCTestCase {
         app.launch()
     }
 
+    func startDelivering() {
+        let primary = app.buttons["startDelivering"].firstMatch
+        if primary.exists && primary.isHittable { primary.tap() }
+        else {
+            waitFor(app.buttons["routeMenu"]).tap()
+            waitFor(app.buttons["startDelivering"].firstMatch).tap()
+        }
+        let currentOrder = app.buttons["confirmStartCurrentOrder"].firstMatch
+        if currentOrder.waitForExistence(timeout: 1) { currentOrder.tap() }
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow While Using App"]
+        if permission.waitForExistence(timeout: 3) { permission.tap() }
+    }
+
+    func leaveWorkspace() {
+        if app.buttons["allRoutes"].exists { app.buttons["allRoutes"].tap() }
+        else if app.buttons["stopsSheet"].exists {
+            app.buttons["stopsSheet"].tap()
+            waitFor(app.buttons["routeMenu"]).tap()
+            waitFor(app.buttons["allRoutes"]).tap()
+        }
+    }
+
     func shot(_ name: String) {
+        // State/control assertions come first; avoid intermediate press/sheet animation frames.
+        if ProcessInfo.processInfo.environment["PP_UI_SCREEN_MATRIX"] == "1" { Thread.sleep(forTimeInterval: 0.5) }
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -38,7 +62,9 @@ final class DriverFlowUITests: XCTestCase {
     func scrollTo(_ element: XCUIElement, in container: XCUIElement? = nil, maxSwipes: Int = 10) {
         var n = 0
         while !(element.exists && element.isHittable) && n < maxSwipes {
-            (container ?? app).swipeUp()
+            let surface: XCUIElement = container ?? app
+            let above = element.exists && !element.frame.isEmpty && element.frame.maxY < surface.frame.minY + 60
+            if above { surface.swipeDown() } else { surface.swipeUp() }
             n += 1
         }
     }
@@ -63,13 +89,14 @@ final class DriverFlowUITests: XCTestCase {
         scrollTo(apply, in: app.collectionViews.firstMatch)
         apply.tap()
 
-        // Plan summary now shows the applied estimate.
+        // List status shows the applied estimate.
+        expandPanel()
         waitFor(app.staticTexts["Duration"])
         shot("04-plan-optimized")
 
-        app.segmentedControls["workspaceMode"].buttons["Deliver"].tap()
+        startDelivering()
         let delivered = waitFor(app.buttons["delivered"])
-        let firstAddress = app.staticTexts["nextStopAddress"].label
+        let firstAddress = app.descendants(matching: .any)["nextStopAddress"].firstMatch.label
         shot("05-deliver-next-stop")
 
         delivered.tap()
@@ -79,10 +106,10 @@ final class DriverFlowUITests: XCTestCase {
         }
         let undo = waitFor(app.buttons["Undo"])
         shot("07-delivered-toast")
-        XCTAssertNotEqual(app.staticTexts["nextStopAddress"].label, firstAddress, "Next stop advances after delivery")
+        XCTAssertNotEqual(app.descendants(matching: .any)["nextStopAddress"].firstMatch.label, firstAddress, "Next stop advances after delivery")
         undo.tap()
-        XCTAssertTrue(app.staticTexts["nextStopAddress"].waitForExistence(timeout: 3))
-        XCTAssertEqual(app.staticTexts["nextStopAddress"].label, firstAddress, "Undo brings the same stop back")
+        XCTAssertTrue(app.descendants(matching: .any)["nextStopAddress"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.descendants(matching: .any)["nextStopAddress"].firstMatch.label, firstAddress, "Undo brings the same stop back")
 
         // Failed with a reason.
         app.buttons["failed"].tap()
@@ -94,20 +121,21 @@ final class DriverFlowUITests: XCTestCase {
             shot("08-failure-reason")
             app.buttons["saveFailure"].tap()
         }
-        waitFor(app.staticTexts["Needs a decision"])
-
         // Skip the next one, then retry the failed package.
         app.buttons["skip"].tap()
+        waitFor(app.buttons["stopsSheet"]).tap()
+        waitFor(app.staticTexts["Needs a decision"])
         let retry = app.buttons["Retry later"].firstMatch
-        scrollTo(retry, in: app.scrollViews.firstMatch)
+        scrollTo(retry, in: app.collectionViews.firstMatch)
         shot("09-needs-decision")
         retry.tap()
 
         // Finish early and find the route in History.
-        let finishEarly = app.buttons["Finish early…"]
-        scrollTo(finishEarly, in: app.scrollViews.firstMatch)
+        let finishEarly = app.buttons["Finish route…"]
+        scrollTo(finishEarly, in: app.collectionViews.firstMatch)
         finishEarly.tap()
         waitFor(app.buttons["Finish route"]).tap()
+        leaveWorkspace()
         app.tabBars.buttons["History"].tap()
         waitFor(app.buttons["historyRow"]).tap()
         waitFor(header("Results"))
@@ -161,8 +189,7 @@ final class DriverFlowUITests: XCTestCase {
 
     /// Simulator has no camera: the scan tab must offer import / typing alternatives.
     func testScanFallbackWithoutCamera() throws {
-        launch()
-        app.tabBars.buttons["Scan"].tap()
+        launch(extra: ["-PPInitialTab", "scan"])
         XCTAssertFalse(app.buttons["allowCamera"].exists, "The simulator must not offer permission for nonexistent camera hardware")
         XCTAssertTrue(app.buttons["typeAddress"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["importPhoto"].exists)
@@ -174,6 +201,7 @@ final class DriverFlowUITests: XCTestCase {
 
     func testSettingsAndPrivacy() throws {
         launch()
+        leaveWorkspace()
         app.tabBars.buttons["Settings"].tap()
         waitFor(app.staticTexts["Navigation app"])
         shot("17-settings")
@@ -184,16 +212,23 @@ final class DriverFlowUITests: XCTestCase {
 
     func testLargeTextDeliverView() throws {
         launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL"])
-        waitFor(app.segmentedControls["workspaceMode"]).buttons["Deliver"].tap()
+        startDelivering()
         waitFor(app.buttons["delivered"])
         XCTAssertTrue(app.buttons["delivered"].isHittable, "Delivered stays reachable at large text sizes")
+        XCTAssertGreaterThanOrEqual(app.buttons["delivered"].frame.height, 72)
+        XCTAssertTrue(app.staticTexts["actionDestination"].label.contains("Unit 204"))
         shot("19-deliver-accessibility-large-text")
+        let address = app.descendants(matching: .any)["nextStopAddress"].firstMatch.label
+        waitFor(app.buttons["showMap"]).tap()
+        XCTAssertTrue(waitFor(app.descendants(matching: .any)["routeMap"]).exists)
+        shot("19-full-screen-map-accessibility")
+        waitFor(app.buttons["Close"]).tap()
+        XCTAssertEqual(waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label, address)
+        XCTAssertTrue(app.buttons["delivered"].isHittable)
     }
     func expandPanel() {
-        let handle = waitFor(app.buttons["panelHandle"])
-        if !handle.label.contains("full height") { handle.tap() }
-        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'full height'"), object: handle)
-        XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 3), .completed)
+        let toggle = waitFor(app.buttons["planListToggle"])
+        if toggle.label.contains("Full list") { toggle.tap() }
     }
 
     func testPanelSwipesStopRemovalUndoAndNextStop() throws {
@@ -211,14 +246,16 @@ final class DriverFlowUITests: XCTestCase {
         scrollTo(second, in: app.collectionViews.firstMatch)
         second.swipeRight()
         waitFor(app.buttons["Deliver next"]).tap()
-        app.segmentedControls["workspaceMode"].buttons["Deliver"].tap()
-        XCTAssertEqual(waitFor(app.staticTexts["nextStopAddress"]).label, "45 SAMPLE AVE")
+        startDelivering()
+        XCTAssertEqual(waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label, "45 SAMPLE AVE")
         shot("21-selected-next-stop")
-        let handle = app.buttons["panelHandle"]
-        handle.press(forDuration: 0.1, thenDragTo: app.buttons["delivered"])
-        XCTAssertTrue(app.staticTexts["nextStopAddress"].isHittable, "Collapsing delivery must leave the destination visible")
+        XCTAssertFalse(app.buttons["panelHandle"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["nextStopAddress"].firstMatch.isHittable)
+        // CGRect subtraction can report 43.99999999999997 for an exact 44-point frame.
+        XCTAssertGreaterThanOrEqual(app.descendants(matching: .any)["nextStopAddress"].firstMatch.frame.height, 44 - 0.001)
         XCTAssertTrue(app.buttons["delivered"].isHittable)
-        shot("22-delivery-after-panel-drag")
+        XCTAssertGreaterThanOrEqual(app.buttons["delivered"].frame.height, 58)
+        shot("22-fixed-delivery-layout")
     }
 
     func testReorderStops() throws {
@@ -252,6 +289,7 @@ final class DriverFlowUITests: XCTestCase {
         let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'In vehicle: Shelf A1'")).firstMatch
         waitFor(result).tap()
         waitFor(app.navigationBars["Stop 1"])
+        scrollTo(header("Packages (2)"), in: app.collectionViews.firstMatch)
         XCTAssertTrue(header("Packages (2)").exists)
         shot("24-package-search-details")
         let add = app.buttons["Add another package"]
@@ -259,9 +297,12 @@ final class DriverFlowUITests: XCTestCase {
         add.tap()
         waitFor(app.buttons["savePackage"])
         app.buttons["Cancel"].tap()
+        scrollTo(header("Packages (2)"), in: app.collectionViews.firstMatch)
         XCTAssertTrue(header("Packages (2)").exists, "Cancel must not create a package")
+        scrollTo(app.buttons["Add another package"], in: app.collectionViews.firstMatch)
         app.buttons["Add another package"].tap()
         waitFor(app.buttons["savePackage"]).tap()
+        scrollTo(header("Packages (3)"), in: app.collectionViews.firstMatch)
         XCTAssertTrue(header("Packages (3)").exists)
         let packageID = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'packageRow.'")).firstMatch.identifier
         let package = app.buttons[packageID]
@@ -299,34 +340,37 @@ final class DriverFlowUITests: XCTestCase {
         app.buttons["routeMenu"].tap()
         waitFor(app.buttons["Archive"]).tap()
         waitFor(app.buttons["newRoute"])
+        leaveWorkspace()
         app.tabBars.buttons["History"].tap()
         waitFor(app.buttons["historyRow"]).tap()
         let reopen = app.buttons["Reopen route"]
         scrollTo(reopen, in: app.collectionViews.firstMatch)
         reopen.tap()
         waitFor(app.buttons["optimize"])
-        XCTAssertTrue(app.tabBars.buttons["Route"].isSelected)
+        XCTAssertTrue(app.buttons["routeMenu"].isHittable, "Reopening returns to the route workspace")
+        XCTAssertFalse(app.tabBars.buttons["Route"].exists, "The workspace hides the tab bar")
         shot("26-reopened-route")
     }
 
     func testPartialDeliveryFailureCancelAndExcludeUndo() throws {
         launch()
-        app.segmentedControls["workspaceMode"].buttons["Deliver"].tap()
-        let address = waitFor(app.staticTexts["nextStopAddress"]).label
+        startDelivering()
+        let address = waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label
         app.buttons["failed"].tap()
-        XCTAssertFalse(waitFor(app.buttons["savePackageOutcome"]).isEnabled)
+        XCTAssertFalse(waitFor(app.buttons["saveFailure"]).isEnabled)
         app.buttons["Cancel"].tap()
-        XCTAssertEqual(app.staticTexts["nextStopAddress"].label, address)
+        XCTAssertEqual(app.descendants(matching: .any)["nextStopAddress"].firstMatch.label, address)
+        waitFor(app.buttons["packageToggle.1"]).tap()
+        XCTAssertTrue(app.buttons["delivered"].label.contains("1 of 2"))
         app.buttons["delivered"].tap()
-        waitFor(app.buttons["outcomePackage.1"]).tap()
-        app.buttons["savePackageOutcome"].tap()
-        XCTAssertEqual(app.staticTexts["nextStopAddress"].label, address, "The other package keeps this stop active")
+        XCTAssertEqual(app.descendants(matching: .any)["nextStopAddress"].firstMatch.label, address, "The other package keeps this stop active")
         app.buttons["failed"].tap()
         XCTAssertFalse(waitFor(app.buttons["saveFailure"]).isEnabled)
         app.buttons["reason.noOneHome"].tap()
         app.buttons["saveFailure"].tap()
+        waitFor(app.buttons["stopsSheet"]).tap()
         let exclude = app.buttons["Exclude"].firstMatch
-        scrollTo(exclude, in: app.scrollViews.firstMatch)
+        scrollTo(exclude, in: app.collectionViews.firstMatch)
         exclude.tap()
         waitFor(app.buttons["Undo"]).tap()
         XCTAssertTrue(app.buttons["Retry later"].firstMatch.exists)
@@ -334,8 +378,7 @@ final class DriverFlowUITests: XCTestCase {
     }
 
     func testScanReviewTypingPhotoAndCSVFallbacks() throws {
-        launch()
-        app.tabBars.buttons["Scan"].tap()
+        launch(extra: ["-PPInitialTab", "scan"])
         waitFor(app.buttons["reviewQueue"]).tap()
         waitFor(app.staticTexts["Nothing to review"])
         shot("28-empty-review-queue")
@@ -356,16 +399,17 @@ final class DriverFlowUITests: XCTestCase {
 
     func testOfflineDeliveryPersistsAfterRelaunch() throws {
         launch(extra: ["-PPSimulateOffline", "YES"])
-        app.segmentedControls["workspaceMode"].buttons["Deliver"].tap()
+        startDelivering()
         waitFor(app.buttons["skip"]).tap()
-        let next = app.staticTexts["nextStopAddress"].label
+        let next = app.descendants(matching: .any)["nextStopAddress"].firstMatch.label
         app.terminate()
         app.launchArguments = ["-PPDemoMode", "YES", "-PPSimulateOffline", "YES"]
         app.launch()
         waitFor(app.buttons["delivered"])
-        XCTAssertEqual(app.staticTexts["nextStopAddress"].label, next)
+        XCTAssertEqual(app.descendants(matching: .any)["nextStopAddress"].firstMatch.label, next)
+        waitFor(app.buttons["stopsSheet"]).tap()
         let retry = app.buttons["Retry later"].firstMatch
-        scrollTo(retry, in: app.scrollViews.firstMatch)
+        scrollTo(retry, in: app.collectionViews.firstMatch)
         XCTAssertTrue(retry.exists)
         shot("30-offline-relaunch")
     }
@@ -373,7 +417,9 @@ final class DriverFlowUITests: XCTestCase {
     func testStopAddressPinAndDeliveryWindowEditing() throws {
         launch()
         waitFor(app.buttons["stopRow.1"]).tap()
-        waitFor(app.buttons["editStopAddress"]).tap()
+        let editAddress = app.buttons["editStopAddress"]
+        scrollTo(editAddress, in: app.collectionViews.firstMatch)
+        waitFor(editAddress).tap()
         waitFor(app.textFields["Number"]).tap()
         app.textFields["Number"].typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "321")
         waitFor(app.buttons["Check address"]).tap()
@@ -383,11 +429,14 @@ final class DriverFlowUITests: XCTestCase {
         waitFor(app.buttons["placeStopPin"]).tap()
         waitFor(app.buttons["Use this location"]).tap()
         XCTAssertTrue(waitFor(app.buttons["placeStopPin"]).label.contains("Move pin"), "The saved driver pin is shown as movable")
-        app.buttons["Navigate"].tap()
+        let detailNavigate = app.buttons["Navigate"]
+        scrollTo(detailNavigate, in: app.collectionViews.firstMatch)
+        detailNavigate.tap()
         waitFor(app.buttons["Apple Maps"])
         XCTAssertTrue(app.buttons["Google Maps"].exists, "Ask each time works from stop details")
         if app.buttons["Cancel"].exists { app.buttons["Cancel"].tap() }
         else { app.navigationBars["Stop 1"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        for _ in 0..<4 { app.collectionViews.firstMatch.swipeDown() }
         let window = app.buttons["deliveryTimePicker"]
         scrollTo(window, in: app.collectionViews.firstMatch)
         window.tap()
@@ -397,22 +446,23 @@ final class DriverFlowUITests: XCTestCase {
         saveWindow.tap()
         shot("31-stop-pin-and-time-window")
         app.buttons["Done"].tap()
-        app.segmentedControls["workspaceMode"].buttons["Deliver"].tap()
-        XCTAssertEqual(waitFor(app.staticTexts["nextStopAddress"]).label, "321 EXAMPLE ST")
+        startDelivering()
+        XCTAssertEqual(waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label, "321 EXAMPLE ST")
     }
 
     func testNavigationReturnDoesNotDeliver() throws {
         launch()
-        app.segmentedControls["workspaceMode"].buttons["Deliver"].tap()
-        let address = waitFor(app.staticTexts["nextStopAddress"]).label
+        startDelivering()
+        let address = waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label
         app.buttons["navigate"].tap()
         waitFor(app.buttons["Apple Maps"]).tap()
         let maps = XCUIApplication(bundleIdentifier: "com.apple.Maps")
         XCTAssertTrue(maps.wait(for: .runningForeground, timeout: 15))
         app.activate()
         waitFor(app.descendants(matching: .any)["returnBanner"].firstMatch)
-        XCTAssertEqual(app.staticTexts["nextStopAddress"].label, address)
+        XCTAssertEqual(app.descendants(matching: .any)["nextStopAddress"].firstMatch.label, address)
         XCTAssertTrue(app.buttons["delivered"].isEnabled)
+        XCTAssertTrue(app.buttons["pauseExecution"].exists, "Navigation handoff and return keep the explicitly started session active")
         shot("32-back-from-navigation")
     }
 
@@ -422,9 +472,11 @@ final class DriverFlowUITests: XCTestCase {
         app.buttons["optimize"].tap()
         waitFor(app.buttons["calculate"]).tap()
         let keep = waitFor(app.buttons["keepCurrentOrder"], timeout: 20)
+        shot("atlas-optimize-preview")
         scrollTo(keep, in: app.collectionViews.firstMatch)
         keep.tap()
         XCTAssertEqual(app.buttons["stopRow.1"].label, first)
+        XCTAssertTrue(app.buttons["startDelivering"].isEnabled)
         app.buttons["routeMenu"].tap()
         waitFor(app.buttons["Route settings"]).tap()
         waitFor(app.textFields["routeName"])
@@ -442,25 +494,24 @@ final class DriverFlowUITests: XCTestCase {
 
     func testMapSelectionPanAndZoom() throws {
         launch()
-        let map = waitFor(app.maps.firstMatch)
-        let marker = map.descendants(matching: .any).matching(NSPredicate(format: "label == 'Stop 7'")).firstMatch
-        waitFor(marker).tap()
-        let row = waitFor(app.buttons["stopRow.7"])
-        XCTAssertTrue(row.isHittable, "Selecting a marker brings its stop into view")
+        startDelivering()
+        let address = waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label
+        let map = waitFor(app.descendants(matching: .any)["routeMap"].firstMatch)
         map.pinch(withScale: 1.5, velocity: 1)
         map.swipeLeft()
-        shot("34-map-pan-and-zoom")
-        row.tap()
-        waitFor(app.navigationBars["Stop 7"])
+        waitFor(app.buttons["stopStrip.3"]).tap()
+        waitFor(app.buttons["Details"]).tap()
+        waitFor(app.navigationBars["Stop 3"])
         app.buttons["Done"].tap()
+        XCTAssertEqual(waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label, address, "Inspecting a strip stop never changes the next delivery")
+        shot("34-map-pan-and-zoom")
     }
 
     /// Seed the simulator photo library with fixtures/labels/e1_victoria_unit204.png using simctl
     /// addmedia, then run with TEST_RUNNER_PP_UI_PHOTO_FIXTURE=1. Ordinary runs skip this dependency.
     func testImportedLabelPhotoThroughRecognitionAndConfirmation() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PP_UI_PHOTO_FIXTURE"] == "1", "Requires the synthetic label fixture in the simulator photo library")
-        launch()
-        app.tabBars.buttons["Scan"].tap()
+        launch(extra: ["-PPInitialTab", "scan"])
         waitFor(app.buttons["importPhoto"]).tap()
         shot("35-label-photo-picker")
         let photo = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'")).firstMatch
@@ -536,19 +587,71 @@ final class DriverFlowUITests: XCTestCase {
         shot("41-csv-imported-stops")
     }
 
+
+    func testSkipUndoAndRetryUndo() throws {
+        launch()
+        startDelivering()
+        let first = waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label
+        app.buttons["skip"].tap()
+        XCTAssertNotEqual(waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label, first)
+        waitFor(app.buttons["Undo"]).tap()
+        XCTAssertEqual(waitFor(app.descendants(matching: .any)["nextStopAddress"].firstMatch).label, first)
+        app.buttons["skip"].tap()
+        waitFor(app.buttons["stopsSheet"]).tap()
+        waitFor(app.buttons["Retry later"].firstMatch).tap()
+        waitFor(app.buttons["Undo"]).tap()
+        XCTAssertTrue(app.buttons["Retry later"].firstMatch.exists)
+    }
+
     /// Used by capture-screenshots.sh: wait for real controls instead of photographing a launch screen.
     func testPrimaryScreensForScreenshotAudit() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PP_UI_SCREEN_MATRIX"] == "1", "Screenshot audit only")
-        launch()
+        launch(extra: ["-PPDisableAnimations", "YES"])
         waitFor(app.buttons["optimize"])
+        let toggle = waitFor(app.buttons["planListToggle"])
+        if toggle.label.contains("Map") { toggle.tap() }
         shot("matrix-plan")
-        app.segmentedControls["workspaceMode"].buttons["Deliver"].tap()
+        expandPanel()
+        shot("matrix-plan-list")
+        app.buttons["optimize"].tap()
+        scrollTo(app.buttons["calculate"], in: app.collectionViews.firstMatch)
+        waitFor(app.buttons["calculate"]).tap()
+        waitFor(app.buttons["applyPlan"], timeout: 30)
+        shot("matrix-optimize")
+        app.buttons["keepCurrentOrder"].tap()
+        XCTAssertTrue(app.buttons["startDelivering"].isEnabled)
+        startDelivering()
         waitFor(app.buttons["delivered"])
-        XCTAssertTrue(app.staticTexts["actionDestination"].isHittable)
+        let locationPermission = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow While Using App"]
+        XCTAssertFalse(locationPermission.exists, "System permission prompts are not accepted as design screenshots")
+        let destination = app.descendants(matching: .any)["nextStopAddress"].firstMatch
+        if app.buttons["showMap"].exists {
+            XCTAssertTrue(app.staticTexts["actionDestination"].isHittable)
+        } else {
+            XCTAssertTrue(destination.isHittable)
+        }
         shot("matrix-deliver")
-        app.tabBars.buttons["Scan"].tap()
+        waitFor(app.buttons["packageToggle.1"]).tap()
+        app.buttons["delivered"].tap()
+        XCTAssertTrue(waitFor(app.buttons["packageToggle.0"]).exists, "The unselected package remains actionable")
+        shot("matrix-partial")
+        waitFor(app.buttons["stopsSheet"]).tap()
+        XCTAssertTrue(waitFor(app.textFields["stopsSearch"]).isHittable)
+        shot("matrix-stops")
+        app.buttons["Done"].tap()
+        launch(extra: ["-PPInitialTab", "scan", "-PPDisableAnimations", "YES"])
         waitFor(app.buttons["typeAddress"])
         shot("matrix-scan")
+        app.buttons["typeAddress"].tap()
+        waitFor(app.textFields["manualAddressField"]).tap()
+        app.textFields["manualAddressField"].typeText("Example St, Victoria BC V8W 1B2")
+        if app.buttons["manualKeyboardDone"].waitForExistence(timeout: 2) { app.buttons["manualKeyboardDone"].tap() }
+        scrollTo(app.buttons["manualContinue"], in: app.collectionViews.firstMatch)
+        waitFor(app.buttons["manualContinue"]).tap()
+        waitFor(app.buttons["addToRoute"])
+        shot("matrix-address-review")
+        app.navigationBars["Review address"].buttons["Cancel"].tap()
+        waitFor(app.navigationBars["Search an address"].buttons["Cancel"]).tap()
         app.tabBars.buttons["History"].tap()
         waitFor(app.staticTexts["No finished routes"])
         shot("matrix-history")

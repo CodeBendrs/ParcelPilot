@@ -12,6 +12,13 @@ import XCTest
 ///
 /// Afterwards `node firebase/scripts/verify-emulator-e2e.mjs` checks the server-side documents.
 final class EmulatorEndToEndUITests: XCTestCase {
+    private func dismissTypingIntroduction(in app: XCUIApplication) {
+        let introduction = app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] 'Speed up your typing'")).firstMatch
+        if introduction.waitForExistence(timeout: 2) {
+            app.buttons.matching(NSPredicate(format: "label == 'Continue' AND identifier != 'manualContinue'")).firstMatch.tap()
+        }
+    }
+
     func testEndToEndAgainstEmulators() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PP_EMULATOR"] == "1", "Set TEST_RUNNER_PP_EMULATOR=1 with the emulators running")
         let app = XCUIApplication()
@@ -81,14 +88,22 @@ final class EmulatorEndToEndUITests: XCTestCase {
         scrollTo(apply)
         apply.tap()
 
-        app.segmentedControls["workspaceMode"].buttons["Deliver"].tap()
+        let start = app.buttons["startDelivering"].firstMatch
+        if start.waitForExistence(timeout: 5) && start.isHittable { start.tap() }
+        else { app.buttons["routeMenu"].tap(); app.buttons["startDelivering"].firstMatch.tap() }
         XCTAssertTrue(app.buttons["delivered"].waitForExistence(timeout: 10))
         app.buttons["delivered"].tap()
         XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5))
         shot("e2e-04-delivered")
-        // Let the write reach the emulator.
-        XCTAssertTrue(app.descendants(matching: .any)["syncStatus"].waitForExistence(timeout: 5))
-        sleep(3)
+        XCTAssertTrue(app.buttons["syncStateRow"].waitForNonExistence(timeout: 20), "The delivery sync row clears only after pending changes sync")
+        // A hidden sync row means fully synced; verify via the existing Routes indicator.
+        app.buttons["stopsSheet"].tap()
+        app.buttons["routeMenu"].tap()
+        app.buttons["allRoutes"].tap()
+        let sync = app.buttons["syncStatus"]
+        XCTAssertTrue(sync.waitForExistence(timeout: 10))
+        let synced = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "All changes synced"), object: sync)
+        XCTAssertEqual(XCTWaiter.wait(for: [synced], timeout: 20), .completed)
     }
 
     /// Address suggestions through the `suggestAddresses` callable (emulator test provider): typing shows
@@ -112,6 +127,7 @@ final class EmulatorEndToEndUITests: XCTestCase {
         let field = app.textViews["manualAddressField"].exists ? app.textViews["manualAddressField"] : app.textFields["manualAddressField"]
         XCTAssertTrue(field.waitForExistence(timeout: 10))
         field.typeText("45 Sample Ave, Victoria BC V8V 2B2")
+        dismissTypingIntroduction(in: app)
 
         let suggestion = app.buttons["suggestion.0"]
         XCTAssertTrue(suggestion.waitForExistence(timeout: 15), "Typing shows a suggestion from the suggestAddresses callable")
@@ -122,12 +138,16 @@ final class EmulatorEndToEndUITests: XCTestCase {
         add(shot)
         suggestion.tap()
 
-        XCTAssertTrue(app.navigationBars["Confirm address"].waitForExistence(timeout: 15))
+        // The emulator suggestion supplies street/civic/postal fields but no municipality.
+        // Atlas therefore correctly keeps this in Review address instead of claiming it is clear.
+        XCTAssertTrue(app.navigationBars["Review address"].waitForExistence(timeout: 15))
         let street = app.textFields["field.street"]
+        var scrolls = 0
+        while !(street.exists && street.isHittable) && scrolls < 8 { app.collectionViews.firstMatch.swipeUp(); scrolls += 1 }
         XCTAssertTrue(street.waitForExistence(timeout: 5))
         XCTAssertEqual(street.value as? String, "Sample Ave", "The picked address fills the card")
         XCTAssertEqual(app.textFields["field.civic"].value as? String, "45")
-        XCTAssertFalse(app.staticTexts["Checking the address…"].exists, "A picked suggestion arrives already checked")
+        XCTAssertFalse(app.staticTexts["Checking map…"].exists, "A picked suggestion arrives already checked")
         let card = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         card.name = "suggest-02-confirmation"
         card.lifetime = .keepAlways
@@ -152,7 +172,7 @@ final class EmulatorEndToEndUITests: XCTestCase {
         /// iOS offers to save the new password in the Passwords app; decline so it doesn't cover the app.
         func dismissSavePasswordPrompt() {
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-            for candidate in [app.buttons["Not Now"], springboard.buttons["Not Now"]] where candidate.waitForExistence(timeout: 3) {
+            for candidate in [app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] 'Not now'")).firstMatch, springboard.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] 'Not now'")).firstMatch] where candidate.waitForExistence(timeout: 5) {
                 candidate.tap()
                 return
             }
@@ -166,6 +186,7 @@ final class EmulatorEndToEndUITests: XCTestCase {
         let emailField = app.textFields["emailField"]
         emailField.tap()
         emailField.typeText(email)
+        dismissTypingIntroduction(in: app)
         let passwordField = app.secureTextFields["passwordField"]
         passwordField.tap()
         passwordField.typeText(password)
@@ -175,6 +196,7 @@ final class EmulatorEndToEndUITests: XCTestCase {
 
         let banner = app.descendants(matching: .any)["verifyEmailBanner"]
         XCTAssertTrue(banner.waitForExistence(timeout: 20), "New email accounts are asked to confirm their address")
+        dismissSavePasswordPrompt()
         shot("email-03-confirm-banner")
 
         try openVerificationLink(for: email)
