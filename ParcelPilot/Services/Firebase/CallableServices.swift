@@ -133,6 +133,7 @@ nonisolated struct TimelineDTO: Encodable, Equatable {
     struct Window: Encodable, Equatable { var start: String?; var end: String }
     struct BreakWindow: Encodable, Equatable { var earliest: String; var latest: String }
     var departure: String
+    var latestArrival: String?
     var windows: [String: Window]
     var breakWindow: BreakWindow?
     var tzdataVersion: String?
@@ -151,7 +152,7 @@ enum TimelineBuilder {
             windows[stop.id] = .init(start: w.kind == .hard ? w.startMinute.map(at) : nil, end: at(w.endMinute))
         }
         let breakWindow = route.breakRule.map { TimelineDTO.BreakWindow(earliest: at($0.earliestStartMinute), latest: at($0.latestStartMinute)) }
-        return TimelineDTO(departure: at(route.departureMinute), windows: windows, breakWindow: breakWindow, tzdataVersion: TimeZone.timeZoneDataVersion)
+        return TimelineDTO(departure: at(route.departureMinute), latestArrival: route.latestArrivalMinute.map(at), windows: windows, breakWindow: breakWindow, tzdataVersion: TimeZone.timeZoneDataVersion)
     }
 }
 

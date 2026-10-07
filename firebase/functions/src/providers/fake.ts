@@ -101,6 +101,8 @@ export class FakeTourOptimizer implements TourOptimizer {
     if (this.hooks.failWith) throw this.hooks.failWith;
     const speed = 30_000 / 3600;
     const vehicle = request.model.vehicles[0];
+    const end = pointOf(vehicle.endWaypoint);
+    const latestArrival = vehicle.endTimeWindows?.[0]?.endTime ? Date.parse(vehicle.endTimeWindows[0].endTime) : undefined;
     let clock = Date.parse(vehicle.startTimeWindows?.[0]?.startTime ?? request.model.globalStartTime);
     let position = pointOf(vehicle.startWaypoint)!;
     const shipments = request.model.shipments.map((s, i) => ({ i, s, p: pointOf(s.deliveries[0].arrivalWaypoint)! }));
@@ -126,7 +128,12 @@ export class FakeTourOptimizer implements TourOptimizer {
       const arrival = clock + t * 1000;
       const w = next.s.deliveries[0].timeWindows?.[0];
       const startOk = w?.startTime ? Math.max(arrival, Date.parse(w.startTime)) : arrival;
-      if (w?.endTime && startOk > Date.parse(w.endTime)) {
+      let estimatedFinish = startOk + parseDuration(next.s.deliveries[0].duration) * 1000 + (end ? meters(next.p, end) / speed * 1000 : 0);
+      if (!breakTaken && vehicle.breakRule) {
+        const b = vehicle.breakRule.breakRequests[0];
+        estimatedFinish = Math.max(estimatedFinish, Date.parse(b.earliestStartTime)) + parseDuration(b.minDuration) * 1000;
+      }
+      if ((w?.endTime && startOk > Date.parse(w.endTime)) || (latestArrival !== undefined && estimatedFinish > latestArrival)) {
         skipped.push({ index: next.i, label: next.s.label, reasons: [{ code: "CANNOT_BE_PERFORMED_WITHIN_VEHICLE_TIME_WINDOWS" }] });
         continue;
       }
@@ -136,11 +143,16 @@ export class FakeTourOptimizer implements TourOptimizer {
       clock = startOk + parseDuration(next.s.deliveries[0].duration) * 1000;
       position = next.p;
     }
-    const end = pointOf(vehicle.endWaypoint);
     if (end) {
       const d = meters(position, end), t = d / speed;
       transitions.push({ travelDuration: duration(t), travelDistanceMeters: Math.round(d), startTime: rfc3339(new Date(clock)) });
       clock += t * 1000; travelS += t; travelM += d;
+    }
+    if (!breakTaken && vehicle.breakRule) {
+      const b = vehicle.breakRule.breakRequests[0];
+      const start = Math.max(clock, Date.parse(b.earliestStartTime));
+      breaks.push({ startTime: rfc3339(new Date(start)), duration: b.minDuration });
+      clock = start + parseDuration(b.minDuration) * 1000;
     }
     if (this.hooks.beforeRespond) await this.hooks.beforeRespond(request);
     return {

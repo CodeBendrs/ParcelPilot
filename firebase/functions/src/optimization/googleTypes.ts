@@ -38,6 +38,7 @@ export interface VehicleApi {
   costPerHour: number;
   costPerKilometer: number;
   startTimeWindows?: TimeWindowApi[];
+  endTimeWindows?: TimeWindowApi[];
   breakRule?: { breakRequests: BreakRequestApi[] };
 }
 

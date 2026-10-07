@@ -16,7 +16,7 @@ import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import { AppError, errors } from "../errors";
 import { release, reserveOptimization, type Limits, type Reservation } from "../quota";
 import type { TourOptimizer } from "../providers/interfaces";
-import type { OriginInput, OutcomeDoc, PackageDoc, PlanMetricsOut, ProposalOut, RouteDoc, StopDoc } from "../types";
+import type { LocationTaskDoc, OriginInput, OutcomeDoc, PackageDoc, PlanMetricsOut, ProposalOut, RouteDoc, StopDoc } from "../types";
 import { parseInput, RequestOptimizationInput } from "../validation";
 import { evaluateEligibility, validPoint, type EligibleStop } from "./eligibility";
 import type { OptimizeToursRequest, OptimizeToursResponse, Waypoint } from "./googleTypes";
@@ -148,18 +148,31 @@ async function run(
     throw new AppError("failed-precondition", "revision-ahead", "Your latest changes haven't reached the server yet. They will sync automatically — try again once they are saved.", ["Wait for changes to sync, then optimize again."]);
   }
 
-  const [stopsSnap, packagesSnap, outcomesSnap] = await Promise.all([
+  const [stopsSnap, packagesSnap, outcomesSnap, tasksSnap] = await Promise.all([
     routeRef.collection("stops").get(),
     routeRef.collection("packages").get(),
     routeRef.collection("outcomes").get(),
+    routeRef.collection("tasks").get(),
   ]);
   const stops = stopsSnap.docs.map((d) => d.data() as StopDoc);
   const packages = packagesSnap.docs.map((d) => d.data() as PackageDoc);
   const outcomes = outcomesSnap.docs.map((d) => d.data() as OutcomeDoc);
+  const tasks = tasksSnap.docs.map((doc) => {
+    const data = doc.data();
+    if (!readableTask(data, doc.id)) {
+      throw new AppError("failed-precondition", "unsupported-work", "Some required work cannot be interpreted safely, so this route cannot be optimized.", ["Update the app or repair the affected work before optimizing."]);
+    }
+    return data;
+  });
 
-  const eligibility = evaluateEligibility(stops, packages, outcomes, now, deps.allowSynthetic);
+  const eligibility = evaluateEligibility(stops, packages, outcomes, now, deps.allowSynthetic, tasks);
+  const stopIds = new Set(stops.map((stop) => stop.id));
+  if (eligibility.excluded.some((stop) => stop.reason === "unsupportedTasks")
+    || tasks.some((task) => task.required && !stopIds.has(task.stopID))) {
+    throw new AppError("failed-precondition", "unsupported-work", "Some required work cannot be interpreted safely, so this route cannot be optimized.", ["Update the app or repair the affected work before optimizing."]);
+  }
   if (eligibility.eligible.length === 0) {
-    throw new AppError("failed-precondition", "no-eligible-stops", "There are no verified stops with deliveries left to plan.", ["Review stops that need address verification.", "Retry skipped packages to include them."]);
+    throw new AppError("failed-precondition", "no-eligible-stops", "There are no verified stops with required work left to plan.", ["Review stops that need address verification.", "Retry deferred work to include it.", "Update the app if a stop has unsupported work."]);
   }
   if (eligibility.eligible.length > deps.limits.maxEligibleStops) {
     throw new AppError("failed-precondition", "too-many-stops", `This route has ${eligibility.eligible.length} stops ready to plan; the limit is ${deps.limits.maxEligibleStops} per optimization.`, ["Split the route into two routes."]);
@@ -167,8 +180,11 @@ async function run(
 
   const origin = originWaypoint(input.origin, route, stops, now);
   const routeEnd = route.returnToStart ? placeWaypoint(route.start, now) : placeWaypoint(route.end, now);
+  if (route.latestArrivalMinute !== undefined && !routeEnd) {
+    throw new AppError("failed-precondition", "missing-end", "Set a verified warehouse location before planning a latest arrival time.", ["Set Start to your warehouse and enable Return to start, or choose an End location."]);
+  }
   const warnings: string[] = [];
-  const { departure, windows, breakWindow } = checkTimeline(input, route, eligibility.eligible, now, deps.timelineToleranceMs ?? 2 * 3600_000, warnings);
+  const { departure, latestArrival, windows, breakWindow } = checkTimeline(input, route, eligibility.eligible, now, deps.timelineToleranceMs ?? 2 * 3600_000, warnings);
 
   const firstStopId = input.fixedNextStopId && eligibility.eligible.some((e) => e.stop.id === input.fixedNextStopId)
     ? input.fixedNextStopId
@@ -182,6 +198,7 @@ async function run(
     origin,
     routeEnd,
     departure,
+    latestArrival,
     breakWindow,
     firstStopId,
     lastStopId,
@@ -221,6 +238,7 @@ async function run(
     if (built.shipmentStopIds.length === 0) continue;
     const response = await call(built.request);
     const result = interpretSegment(response, built.shipmentStopIds, inputs.serviceSeconds, softDeadline, cursorTime);
+    if (latestArrival && result.end > latestArrival) throw new ProviderInconsistencyError("the plan exceeds the latest arrival time");
     results.push(result);
     unassigned.push(...result.unassigned);
     cursorTime = result.end;
@@ -240,8 +258,8 @@ async function run(
       const built = buildBaselineRequest(inputs, order, `${input.requestId}:baseline`);
       const response = await call(built.request);
       const r = interpretSegment(response, built.shipmentStopIds, inputs.serviceSeconds, softDeadline, departure);
-      if (r.unassigned.length > 0 || built.preUnassigned.length > 0) {
-        baselineNote = "Your current order can't meet every time window, so no savings comparison is shown.";
+      if (r.unassigned.length > 0 || built.preUnassigned.length > 0 || (latestArrival && r.end > latestArrival)) {
+        baselineNote = "Your current order can't meet every time constraint, so no savings comparison is shown.";
       } else {
         baseline = metricsOut(departure, r.end, [r]);
       }
@@ -251,6 +269,7 @@ async function run(
   }
 
   const visits = results.flatMap((r) => r.visits);
+  if (latestArrival && unassigned.length > 0) warnings.push("Some stops could not be scheduled with your latest arrival time and other constraints. Leave earlier, allow a later return, or move stops to another route. Unassigned stops remain on your route.");
   const end = results.length ? results[results.length - 1].end : departure;
   const proposal: ProposalOut = {
     requestId: input.requestId,
@@ -344,7 +363,22 @@ function originWaypoint(origin: OriginInput, route: RouteDoc, stops: StopDoc[], 
   }
 }
 
-function checkTimeline(input: RequestOptimizationInput, route: RouteDoc, eligible: EligibleStop[], now: Date, toleranceMs: number, warnings: string[]): { departure: Date; windows: Map<string, StopWindow>; breakWindow?: PlanInputs["breakWindow"] } {
+/** A malformed required flag must never make persisted work disappear from optimizer input. */
+function readableTask(value: unknown, documentId: string): value is LocationTaskDoc {
+  if (!value || typeof value !== "object") return false;
+  const task = value as Record<string, unknown>;
+  return task.id === documentId && typeof task.id === "string" && task.id.length > 0
+    && typeof task.stopID === "string" && task.stopID.length > 0
+    && typeof task.kind === "string" && task.kind.length > 0
+    && typeof task.required === "boolean"
+    && Number.isInteger(task.schemaVersion)
+    && typeof task.title === "string" && typeof task.instructions === "string"
+    && Number.isInteger(task.orderRank)
+    && task.createdAt instanceof Timestamp && task.updatedAt instanceof Timestamp
+    && (task.packageID === undefined || (typeof task.packageID === "string" && task.packageID.length > 0));
+}
+
+function checkTimeline(input: RequestOptimizationInput, route: RouteDoc, eligible: EligibleStop[], now: Date, toleranceMs: number, warnings: string[]): { departure: Date; latestArrival?: Date; windows: Map<string, StopWindow>; breakWindow?: PlanInputs["breakWindow"] } {
   const tz = route.timeZoneID;
   let drift = false;
   const check = (client: string, minute: number, what: string): Date => {
@@ -363,6 +397,15 @@ function checkTimeline(input: RequestOptimizationInput, route: RouteDoc, eligibl
     throw errors.invalidInput("route time settings are invalid");
   }
   if (input.departNow) departure = new Date(Math.max(now.getTime(), departure.getTime()));
+  let latestArrival: Date | undefined;
+  if (route.latestArrivalMinute !== undefined) {
+    if (!Number.isInteger(route.latestArrivalMinute) || route.latestArrivalMinute <= route.departureMinute || route.latestArrivalMinute >= 2880) throw errors.invalidInput("the latest arrival time must be after departure and within the route's two-day time range");
+    if (!input.timeline.latestArrival) throw errors.invalidInput("the latest arrival time is missing; refresh and try again");
+    latestArrival = check(input.timeline.latestArrival, route.latestArrivalMinute, "the latest arrival time");
+    if (latestArrival <= departure) throw new AppError("failed-precondition", "arrival-deadline-passed", "The latest arrival time is already past or before departure.", ["Set a later arrival time or change the route date."]);
+  } else if (input.timeline.latestArrival) {
+    throw errors.invalidInput("the latest arrival time does not match the route; refresh and try again");
+  }
 
   const windows = new Map<string, StopWindow>();
   for (const e of eligible) {
@@ -391,6 +434,5 @@ function checkTimeline(input: RequestOptimizationInput, route: RouteDoc, eligibl
     };
   }
   if (drift) warnings.push("This device and the server use different time-zone rules for this route's zone. Times follow your device.");
-  return { departure, windows, breakWindow };
+  return { departure, latestArrival, windows, breakWindow };
 }
-

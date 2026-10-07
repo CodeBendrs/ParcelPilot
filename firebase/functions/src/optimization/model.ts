@@ -23,6 +23,7 @@ export interface PlanInputs {
   origin: Waypoint;
   routeEnd?: Waypoint;
   departure: Date;
+  latestArrival?: Date;
   breakWindow?: { earliest: Date; latest: Date; durationSeconds: number };
   firstStopId?: string;
   lastStopId?: string;
@@ -106,6 +107,10 @@ export function buildSegmentRequest(inputs: PlanInputs, segment: SegmentPlan, st
 
   let latestWindowEnd = startTime.getTime();
   for (const stopId of segment.stopIds) {
+    if (inputs.latestArrival && startTime >= inputs.latestArrival) {
+      preUnassigned.push({ stopId, code: "arrival-deadline-conflict", message: "The latest arrival time leaves no time for this part of the route.", suggestions: ["Leave earlier.", "Set a later arrival time.", "Move some stops to another route."] });
+      continue;
+    }
     const e = byId.get(stopId)!;
     const w = inputs.windows.get(stopId);
     const timeWindows: TimeWindowApi[] = [];
@@ -145,6 +150,7 @@ export function buildSegmentRequest(inputs: PlanInputs, segment: SegmentPlan, st
     costPerHour,
     costPerKilometer,
     startTimeWindows: [{ startTime: rfc3339(startTime), endTime: rfc3339(startTime) }],
+    ...(inputs.latestArrival ? { endTimeWindows: [{ endTime: rfc3339(inputs.latestArrival) }] } : {}),
   };
 
   if (segment.carriesBreak && inputs.breakWindow) {
@@ -159,7 +165,7 @@ export function buildSegmentRequest(inputs: PlanInputs, segment: SegmentPlan, st
     }
   }
 
-  const globalEnd = new Date(Math.max(startTime.getTime() + 20 * 3600_000, latestWindowEnd + 3600_000));
+  const globalEnd = new Date(Math.max(startTime.getTime() + 20 * 3600_000, latestWindowEnd + 3600_000, inputs.latestArrival?.getTime() ?? 0));
   const request: OptimizeToursRequest = {
     timeout: duration(solverTimeoutSeconds(shipments.length)),
     model: {

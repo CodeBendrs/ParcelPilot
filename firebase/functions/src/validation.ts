@@ -45,6 +45,7 @@ const origin = z.discriminatedUnion("kind", [
 const timeline = z
   .object({
     departure: isoInstant,
+    latestArrival: isoInstant.optional(),
     windows: z.record(id, z.object({ start: isoInstant.optional(), end: isoInstant }).strict()),
     breakWindow: z.object({ earliest: isoInstant, latest: isoInstant }).strict().optional(),
     tzdataVersion: z.string().max(20).optional(),

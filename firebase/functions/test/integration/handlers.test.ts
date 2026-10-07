@@ -55,7 +55,7 @@ function timeline(route: RouteDoc, stops: StopDoc[]) {
   const at = (m: number) => rfc3339(wallClockToInstant(route.serviceDate, m, route.timeZoneID).date);
   const windows: Record<string, { start?: string; end: string }> = {};
   for (const s of stops) if (s.timeWindow) windows[s.id] = { ...(s.timeWindow.startMinute !== undefined ? { start: at(s.timeWindow.startMinute) } : {}), end: at(s.timeWindow.endMinute) };
-  return { departure: at(route.departureMinute), windows, ...(route.breakRule ? { breakWindow: { earliest: at(route.breakRule.earliestStartMinute), latest: at(route.breakRule.latestStartMinute) } } : {}) };
+  return { departure: at(route.departureMinute), windows, ...(route.latestArrivalMinute !== undefined ? { latestArrival: at(route.latestArrivalMinute) } : {}), ...(route.breakRule ? { breakWindow: { earliest: at(route.breakRule.earliestStartMinute), latest: at(route.breakRule.latestStartMinute) } } : {}) };
 }
 
 function request(route: RouteDoc, stops: StopDoc[], extra: Record<string, unknown> = {}) {
@@ -77,6 +77,111 @@ async function expectAppError(p: Promise<unknown>, code: string, reason?: string
 }
 
 describe("requestOptimization", () => {
+  it("loads standalone work: pickup-only visits are planned and optional-only visits are omitted", async () => {
+    const s = stops(3);
+    const route = await seed("alice", s);
+    const ref = db.doc(`users/alice/routes/${route.id}`);
+    const batch = db.batch();
+    batch.delete(ref.collection("packages").doc("p-s1"));
+    batch.delete(ref.collection("packages").doc("p-s2"));
+    for (const [id, stopID, required] of [["pickup", "s1", true], ["optional", "s2", false]] as const) {
+      batch.set(ref.collection("tasks").doc(id), { id, schemaVersion: 1, stopID, kind: "pickup", required, title: "Collect return", instructions: "", orderRank: 0, createdAt: Timestamp.fromDate(NOW), updatedAt: Timestamp.fromDate(NOW) });
+    }
+    await batch.commit();
+    let req = request(route, s);
+    expect((await requestOptimization(deps(), "alice", req)).status).toBe("succeeded");
+    let proposal = (await db.doc(`users/alice/optimizationRequests/${req.requestId}`).get()).data()!.proposal;
+    expect(proposal.visits.map((visit: { stopId: string }) => visit.stopId).sort()).toEqual(["s1", "s3"]);
+    expect(proposal.excluded).toContainEqual({ stopId: "s2", reason: "noPendingPackages" });
+    const completion = db.batch();
+    completion.set(ref.collection("outcomes").doc("complete"), { id: "complete", schemaVersion: 2, taskID: "pickup", stopID: "s1", kind: "completed", recordedAt: Timestamp.fromDate(NOW), photoIDs: [] });
+    completion.update(ref, { inputRevision: 2 });
+    await completion.commit();
+    req = request({ ...route, inputRevision: 2 }, s);
+    await requestOptimization(deps(), "alice", req);
+    proposal = (await db.doc(`users/alice/optimizationRequests/${req.requestId}`).get()).data()!.proposal;
+    expect(proposal.visits.map((visit: { stopId: string }) => visit.stopId)).toEqual(["s3"]);
+    expect(proposal.completedStopIdsAtRequest).toEqual(["s1"]);
+  });
+
+  it.each([{ kind: "future-work", stopID: "s1" }, { kind: "pickup", stopID: "removed-stop" }])("refuses a proposal for unsafe required work before any provider call: %j", async (extra) => {
+    const s = stops(2);
+    const route = await seed("alice", s);
+    await db.doc(`users/alice/routes/${route.id}/tasks/unsafe`).set({ id: "unsafe", schemaVersion: 1, required: true, title: "Unknown required work", instructions: "", orderRank: 0, createdAt: Timestamp.fromDate(NOW), updatedAt: Timestamp.fromDate(NOW), ...extra });
+    const optimizer = new FakeTourOptimizer();
+    await expectAppError(requestOptimization(deps(optimizer), "alice", request(route, s)), "failed-precondition", "unsupported-work");
+    expect(optimizer.requests).toHaveLength(0);
+    expect((await db.doc("users/alice/usage/2026-10-05").get()).data()?.optimizations ?? 0).toBe(0);
+  });
+
+  it("a task outcome during optimization makes the proposal stale and retains the outcome", async () => {
+    const s = stops(2);
+    const route = await seed("alice", s);
+    const ref = db.doc(`users/alice/routes/${route.id}`);
+    await ref.collection("tasks").doc("pickup").set({ id: "pickup", schemaVersion: 1, stopID: "s1", kind: "pickup", required: true, title: "Collect return", instructions: "", orderRank: 0, createdAt: Timestamp.fromDate(NOW), updatedAt: Timestamp.fromDate(NOW) });
+    const optimizer = new FakeTourOptimizer({ beforeRespond: async () => {
+      const batch = db.batch();
+      batch.set(ref.collection("outcomes").doc("complete"), { id: "complete", schemaVersion: 2, taskID: "pickup", stopID: "s1", kind: "completed", recordedAt: Timestamp.fromDate(NOW), photoIDs: [] });
+      batch.update(ref, { inputRevision: 2 });
+      await batch.commit();
+    } });
+    const req = request(route, s);
+    expect((await requestOptimization(deps(optimizer), "alice", req)).status).toBe("stale");
+    expect((await ref.collection("outcomes").doc("complete").get()).data()?.kind).toBe("completed");
+    expect((await db.doc(`users/alice/optimizationRequests/${req.requestId}`).get()).data()?.proposal).toBeUndefined();
+  });
+
+  it("rejects malformed task reads instead of treating a missing required flag as optional", async () => {
+    const s = stops(2);
+    const route = await seed("alice", s);
+    await db.doc(`users/alice/routes/${route.id}/tasks/bad`).set({ id: "bad", schemaVersion: 1, stopID: "s1", kind: "pickup", title: "Collect return", instructions: "", orderRank: 0, createdAt: Timestamp.fromDate(NOW), updatedAt: Timestamp.fromDate(NOW) });
+    const optimizer = new FakeTourOptimizer();
+    await expectAppError(requestOptimization(deps(optimizer), "alice", request(route, s)), "failed-precondition", "unsupported-work");
+    expect(optimizer.requests).toHaveLength(0);
+  });
+
+  it("includes warehouse arrival in a feasible overnight route and passes the limit to every pinned segment", async () => {
+    const s = stops(4);
+    s[0].pin = "first";
+    s[3].pin = "last";
+    const route = await seed("alice", s, { departureMinute: 1380, latestArrivalMinute: 1500 });
+    const optimizer = new FakeTourOptimizer();
+    const req = request(route, s);
+    expect((await requestOptimization(deps(optimizer), "alice", req)).status).toBe("succeeded");
+    const job = (await db.doc(`users/alice/optimizationRequests/${req.requestId}`).get()).data()!;
+    const limit = Date.parse(timeline(route, s).latestArrival!);
+    expect(job.proposal.metrics.routeEnd.toMillis()).toBeLessThanOrEqual(limit);
+    expect(optimizer.requests).toHaveLength(3);
+    for (const sent of optimizer.requests) expect(sent.model.vehicles[0].endTimeWindows?.[0].endTime).toBe(timeline(route, s).latestArrival);
+  });
+
+  it("reports unscheduled deliveries with a tight arrival limit and never silently drops them", async () => {
+    const s = stops(3);
+    const route = await seed("alice", s, { latestArrivalMinute: 485, defaultServiceSeconds: 600 });
+    const req = request(route, s);
+    expect((await requestOptimization(deps(), "alice", req)).status).toBe("infeasible");
+    const job = (await db.doc(`users/alice/optimizationRequests/${req.requestId}`).get()).data()!;
+    expect(job.proposal.unassigned).toHaveLength(3);
+    expect(job.proposal.visits).toHaveLength(0);
+    expect(job.proposal.warnings.join(" ")).toContain("latest arrival");
+    expect((await db.collection(`users/alice/routes/${route.id}/stops`).get()).size).toBe(3);
+  });
+
+  it("rejects a missing or inconsistent deadline, an absent warehouse, and replanning after the deadline before provider calls", async () => {
+    const s = stops(1);
+    const route = await seed("alice", s, { latestArrivalMinute: 1020 });
+    const optimizer = new FakeTourOptimizer();
+    const missing = timeline(route, s);
+    delete missing.latestArrival;
+    await expectAppError(requestOptimization(deps(optimizer), "alice", request(route, s, { timeline: missing })), "invalid-argument");
+    await expectAppError(requestOptimization(deps(optimizer), "alice", request(route, s, { timeline: { ...timeline(route, s), latestArrival: "2026-10-08T00:00:00Z" } })), "invalid-argument");
+    const lateDeps = deps(optimizer, { now: () => wallClockToInstant(route.serviceDate, 1021, route.timeZoneID).date });
+    await expectAppError(requestOptimization(lateDeps, "alice", request(route, s, { departNow: true })), "failed-precondition", "arrival-deadline-passed");
+    const noWarehouse = await seed("alice", s, { latestArrivalMinute: 1020, start: undefined });
+    await expectAppError(requestOptimization(deps(optimizer), "alice", request(noWarehouse, s, { origin: { kind: "currentLocation", latitude: 48.4, longitude: -123.3 } })), "failed-precondition", "missing-end");
+    expect(optimizer.requests).toHaveLength(0);
+  });
+
   it("produces a verified proposal covering every eligible stop exactly once", async () => {
     const s = stops(8);
     const route = await seed("alice", s);

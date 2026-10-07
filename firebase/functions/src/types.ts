@@ -43,6 +43,7 @@ export interface RouteDoc {
   serviceDate: string;
   timeZoneID: string;
   departureMinute: number;
+  latestArrivalMinute?: number;
   start?: RoutePlaceDoc;
   end?: RoutePlaceDoc;
   returnToStart: boolean;
@@ -80,15 +81,38 @@ export interface PackageDoc {
   createdAt: Timestamp;
 }
 
-export type OutcomeKind = "delivered" | "failed" | "skipped" | "requeued" | "excluded";
+/** Delivery work is projected from packages; only pickup/checklist definitions are stored. */
+export interface LocationTaskDoc {
+  id: string;
+  schemaVersion: number;
+  stopID: string;
+  /** Raw value so future required work can be reported rather than silently discarded. */
+  kind: string;
+  required: boolean;
+  title: string;
+  instructions: string;
+  orderRank: number;
+  /** Association only; outcomes still target this standalone task, not the package delivery. */
+  packageID?: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export type OutcomeKind = "delivered" | "completed" | "failed" | "skipped" | "requeued" | "excluded";
 
 export interface OutcomeDoc {
   id: string;
-  packageID: string;
+  schemaVersion?: number;
+  /** Legacy rows have packageID; schema 2 also names the generalized task. */
+  packageID?: string;
+  taskID?: string;
   stopID: string;
   kind: OutcomeKind;
+  reason?: string;
+  note?: string;
   recordedAt: Timestamp;
   voidedAt?: Timestamp;
+  photoIDs?: string[];
 }
 
 /** Issue with a machine code, a plain explanation and suggested driver actions. */
@@ -121,7 +145,7 @@ export interface PlanMetricsOut {
   breakSeconds: number;
 }
 
-export type ExcludedReason = "completed" | "addressNotVerified" | "noUsableLocation" | "noPendingPackages" | "onlySkippedPackages";
+export type ExcludedReason = "completed" | "addressNotVerified" | "noUsableLocation" | "noPendingPackages" | "onlySkippedPackages" | "unsupportedTasks";
 
 export interface ProposalOut {
   requestId: string;
