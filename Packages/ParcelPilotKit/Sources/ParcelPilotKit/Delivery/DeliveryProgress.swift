@@ -39,13 +39,13 @@ public enum PackageStatus: Hashable, Sendable {
 
 public enum StopStatus: Hashable, Sendable {
     case pending
-    /// Some packages handled, some remain.
+    /// Some required work handled, some remains.
     case partial
-    /// Every package handled (delivered, failed or excluded).
+    /// Every required work item handled (completed, failed or excluded).
     case completed
-    /// Remaining packages were all skipped.
+    /// Remaining required work was all deferred.
     case skipped
-    /// The stop has no packages.
+    /// The stop has no required work.
     case empty
 
     public var label: String {
@@ -59,49 +59,33 @@ public enum StopStatus: Hashable, Sendable {
     }
 }
 
-/// Derives package and stop state from append-only outcomes. Pure and deterministic: the same set of
-/// outcomes always yields the same state, regardless of arrival order — which is what makes offline
-/// replays and multi-device sync safe.
+/// Compatibility view of the canonical WorkLedger. Package labels remain unchanged; stop progress
+/// includes all required work. No independent delivery-state reduction lives here.
 public struct DeliveryLedger: Sendable {
     public let packageStatus: [PackageID: PackageStatus]
     public let activeOutcomes: [PackageID: DeliveryOutcome]
+    public let work: WorkLedger
 
-    public init(packages: [Package], outcomes: [DeliveryOutcome]) {
-        var latest: [PackageID: DeliveryOutcome] = [:]
-        for outcome in outcomes where outcome.voidedAt == nil {
-            if let current = latest[outcome.packageID] {
-                if (outcome.recordedAt, outcome.id) > (current.recordedAt, current.id) { latest[outcome.packageID] = outcome }
-            } else {
-                latest[outcome.packageID] = outcome
-            }
-        }
+    public init(packages: [Package], outcomes: [DeliveryOutcome], tasks: [LocationTask] = []) {
+        let work = WorkLedger(packages: packages, tasks: tasks, outcomes: outcomes)
+        self.work = work
         var status: [PackageID: PackageStatus] = [:]
+        var active: [PackageID: DeliveryOutcome] = [:]
         for package in packages {
-            guard let o = latest[package.id] else { status[package.id] = .pending; continue }
-            switch o.kind {
-            case .delivered: status[package.id] = .delivered(at: o.recordedAt)
-            case .failed: status[package.id] = .failed(o.reason, at: o.recordedAt)
-            case .skipped: status[package.id] = .skipped(at: o.recordedAt)
-            case .excluded: status[package.id] = .excluded(at: o.recordedAt)
-            case .requeued: status[package.id] = .pending
+            let id = LocationTask.deliveryID(for: package.id)
+            switch work.status(of: id) {
+            case .pending, .unsupported: status[package.id] = .pending
+            case .completed(let at): status[package.id] = .delivered(at: at)
+            case .failed(let reason, let at): status[package.id] = .failed(reason, at: at)
+            case .deferred(let at): status[package.id] = .skipped(at: at)
+            case .excluded(let at): status[package.id] = .excluded(at: at)
             }
+            active[package.id] = work.activeOutcomes[id]
         }
-        packageStatus = status
-        activeOutcomes = latest
+        packageStatus = status; activeOutcomes = active
     }
-
     public func status(of packageID: PackageID) -> PackageStatus { packageStatus[packageID] ?? .pending }
-
-    public func stopStatus(_ stop: Stop, packages: [Package]) -> StopStatus {
-        let mine = packages.filter { $0.stopID == stop.id }
-        guard !mine.isEmpty else { return .empty }
-        let statuses = mine.map { status(of: $0.id) }
-        let handled = statuses.filter(\.isHandled).count
-        if handled == statuses.count { return .completed }
-        let remaining = statuses.filter { !$0.isHandled }
-        if remaining.allSatisfy({ if case .skipped = $0 { return true }; return false }) { return .skipped }
-        return handled > 0 ? .partial : .pending
-    }
+    public func stopStatus(_ stop: Stop, packages: [Package]) -> StopStatus { work.stopStatus(stop) }
 }
 
 /// Read-only view of everything on a route, used by planning, delivery and the optimizer.
@@ -111,12 +95,23 @@ public struct RouteSnapshot: Sendable {
     public var packages: [Package]
     public var outcomes: [DeliveryOutcome]
     public var photos: [DeliveryPhoto]
+    public var tasks: [LocationTask]
 
-    public init(route: Route, stops: [Stop], packages: [Package], outcomes: [DeliveryOutcome], photos: [DeliveryPhoto] = []) {
-        self.route = route; self.stops = stops; self.packages = packages; self.outcomes = outcomes; self.photos = photos
+    public init(route: Route, stops: [Stop], packages: [Package], outcomes: [DeliveryOutcome], photos: [DeliveryPhoto] = [], tasks: [LocationTask] = []) {
+        self.route = route; self.stops = stops; self.packages = packages; self.outcomes = outcomes; self.photos = photos; self.tasks = tasks
     }
 
-    public var ledger: DeliveryLedger { DeliveryLedger(packages: packages, outcomes: outcomes) }
+    public var ledger: DeliveryLedger { DeliveryLedger(packages: packages, outcomes: outcomes, tasks: tasks) }
+    public var workLedger: WorkLedger { ledger.work }
+    public var workSummary: WorkSummary { workLedger.summary }
+    public var orphanTasks: [LocationTask] {
+        let ids = Set(stops.map(\.id)); return tasks.filter { !ids.contains($0.stopID) }
+    }
+    public var hasUnsupportedRequiredWork: Bool {
+        let ledger = workLedger
+        return ledger.allTasks.contains { $0.required && ledger.status(of: $0.id) == .unsupported }
+            || orphanTasks.contains(where: \.required)
+    }
     public var orderedStops: [Stop] { stops.sorted { ($0.sequence, $0.createdAt, $0.id) < ($1.sequence, $1.createdAt, $1.id) } }
     public func packages(for stopID: StopID) -> [Package] {
         packages.filter { $0.stopID == stopID }.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
@@ -129,7 +124,7 @@ public struct RouteSnapshot: Sendable {
 
     public func summary() -> RouteSummary {
         let ledger = self.ledger
-        var s = RouteSummary(stopCount: stops.count, packageCount: packages.count)
+        var s = RouteSummary(stopCount: stops.count, packageCount: packages.count, work: ledger.work.summary)
         for p in packages {
             switch ledger.status(of: p.id) {
             case .pending: s.pending += 1
@@ -146,7 +141,7 @@ public struct RouteSnapshot: Sendable {
     }
 
     /// Next stop to work on: the driver's explicit choice if still open, else the first stop in order
-    /// with pending packages, else the first stop with only skipped packages.
+    /// with pending required work, else the first stop with only deferred required work.
     public func nextStop() -> Stop? {
         let ledger = self.ledger
         let ordered = orderedStops
@@ -173,6 +168,9 @@ public enum Eligibility {
         var excluded: [ExcludedStop] = []
         var completed: [StopID] = []
         for stop in snapshot.orderedStops {
+            if ledger.work.hasUnsupportedRequiredWork(at: stop.id) {
+                excluded.append(ExcludedStop(stopID: stop.id, reason: .unsupportedTasks)); continue
+            }
             let status = ledger.stopStatus(stop, packages: snapshot.packages)
             switch status {
             case .completed:
@@ -219,6 +217,13 @@ public enum ProposalValidator {
             return .stale("The route changed after this plan was requested. Your edits were kept; recalculate to include them.")
         }
         if proposal.isExpired(at: now) { return .stale("This plan has expired. Recalculate for current estimates.") }
+        if let minute = snapshot.route.latestArrivalMinute {
+            guard let latest = WallClock.instant(route: snapshot.route, minute: minute),
+                  let metrics = proposal.metrics else {
+                return .invalid("The plan has no arrival estimate to check against your latest arrival time.")
+            }
+            if metrics.routeEnd > latest { return .invalid("The plan arrives after your latest arrival time. Leave earlier, allow a later return, or move stops to another route.") }
+        }
 
         var seen = Set<StopID>()
         for visit in proposal.visits {
@@ -230,6 +235,9 @@ public enum ProposalValidator {
         let unassignedIDs = Set(proposal.unassigned.map(\.stopID))
 
         let current = Eligibility.evaluate(snapshot, now: now, demoMode: demoMode)
+        if current.excluded.contains(where: { $0.reason == .unsupportedTasks }) || !snapshot.orphanTasks.filter(\.required).isEmpty {
+            return .invalid("Some required work cannot be interpreted safely. Review it before accepting a plan.")
+        }
         let ledger = snapshot.ledger
         let stopIDs = Set(snapshot.stops.map(\.id))
         for id in seen where !stopIDs.contains(id) { return .stale("A stop in this plan was removed from the route.") }

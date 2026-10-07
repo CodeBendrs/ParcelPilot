@@ -3,6 +3,7 @@ import Foundation
 public typealias RouteID = String
 public typealias StopID = String
 public typealias PackageID = String
+public typealias TaskID = String
 public typealias OutcomeID = String
 public typealias PhotoID = String
 

@@ -65,11 +65,15 @@ public struct RouteSummary: Codable, Hashable, Sendable {
     public var packageCount: Int
     public var firstOutcomeAt: Date?
     public var lastOutcomeAt: Date?
+    /// Required generalized work counts. Absent on legacy saved summaries; package counters above
+    /// retain their original meaning and are never used as pickup/checklist completion records.
+    public var work: WorkSummary?
 
-    public init(delivered: Int = 0, failed: Int = 0, skipped: Int = 0, excluded: Int = 0, pending: Int = 0, stopCount: Int = 0, packageCount: Int = 0, firstOutcomeAt: Date? = nil, lastOutcomeAt: Date? = nil) {
+    public init(delivered: Int = 0, failed: Int = 0, skipped: Int = 0, excluded: Int = 0, pending: Int = 0, stopCount: Int = 0, packageCount: Int = 0, firstOutcomeAt: Date? = nil, lastOutcomeAt: Date? = nil, work: WorkSummary? = nil) {
         self.delivered = delivered; self.failed = failed; self.skipped = skipped; self.excluded = excluded
         self.pending = pending; self.stopCount = stopCount; self.packageCount = packageCount
         self.firstOutcomeAt = firstOutcomeAt; self.lastOutcomeAt = lastOutcomeAt
+        self.work = work
     }
 }
 
@@ -99,6 +103,9 @@ public struct Route: Codable, Hashable, Sendable, Identifiable {
     public var timeZoneID: String
     /// Departure, wall-clock minutes from local midnight of the service date.
     public var departureMinute: Int
+    /// Hard latest arrival at the route end, including the return drive. Nil means no limit.
+    /// Wall-clock minutes from the service date's midnight (>= 1440 means next day).
+    public var latestArrivalMinute: Int?
 
     public var start: RoutePlace?
     public var end: RoutePlace?
@@ -143,6 +150,7 @@ public struct Route: Codable, Hashable, Sendable, Identifiable {
         self.serviceDate = serviceDate
         self.timeZoneID = timeZoneID
         self.departureMinute = departureMinute
+        self.latestArrivalMinute = nil
         self.start = nil
         self.end = nil
         self.returnToStart = false
@@ -382,6 +390,8 @@ public struct Package: Codable, Hashable, Sendable, Identifiable {
 
 public enum OutcomeKind: String, Codable, Hashable, Sendable {
     case delivered
+    /// Explicit pickup/checklist success. Deliveries keep the legacy `delivered` wire value.
+    case completed
     case failed
     case skipped
     /// Driver chose to retry a failed/skipped package: it returns to remaining work.
@@ -422,11 +432,13 @@ public enum FailureReason: String, Codable, Hashable, Sendable, CaseIterable {
     }
 }
 
-/// Append-only record of something the driver did with a package. Never edited; may be voided once.
-public struct DeliveryOutcome: Codable, Hashable, Sendable, Identifiable {
+/// The one persisted outcome family for deliveries, pickups and checklist work. Legacy schema-1
+/// package outcomes remain readable and retain their wire representation. May be voided once.
+public struct TaskOutcome: Codable, Hashable, Sendable, Identifiable {
     public var id: OutcomeID
     public var schemaVersion: Int
-    public var packageID: PackageID
+    public var packageID: PackageID?
+    public var taskID: TaskID?
     public var stopID: StopID
     public var kind: OutcomeKind
     public var reason: FailureReason?
@@ -441,6 +453,7 @@ public struct DeliveryOutcome: Codable, Hashable, Sendable, Identifiable {
         self.id = id
         self.schemaVersion = 1
         self.packageID = packageID
+        self.taskID = nil
         self.stopID = stopID
         self.kind = kind
         self.reason = reason
@@ -449,7 +462,43 @@ public struct DeliveryOutcome: Codable, Hashable, Sendable, Identifiable {
         self.voidedAt = nil
         self.photoIDs = photoIDs
     }
+
+    public init(id: OutcomeID = StableID.make(), taskID: TaskID, stopID: StopID, kind: OutcomeKind, packageID: PackageID? = nil, reason: FailureReason? = nil, note: String? = nil, recordedAt: Date = Date(), photoIDs: [PhotoID] = []) {
+        self.id = id; self.schemaVersion = 2; self.taskID = taskID; self.packageID = packageID
+        self.stopID = stopID; self.kind = kind; self.reason = reason; self.note = note
+        self.recordedAt = recordedAt; self.voidedAt = nil; self.photoIDs = photoIDs
+    }
+
+    public var targetTaskID: TaskID {
+        taskID ?? packageID.map(LocationTask.deliveryID(for:)) ?? ""
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, schemaVersion, packageID, taskID, stopID, kind, reason, note, recordedAt, voidedAt, photoIDs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(OutcomeID.self, forKey: .id)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        packageID = try c.decodeIfPresent(PackageID.self, forKey: .packageID)
+        taskID = try c.decodeIfPresent(TaskID.self, forKey: .taskID)
+        stopID = try c.decode(StopID.self, forKey: .stopID)
+        kind = try c.decode(OutcomeKind.self, forKey: .kind)
+        reason = try c.decodeIfPresent(FailureReason.self, forKey: .reason)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        recordedAt = try c.decode(Date.self, forKey: .recordedAt)
+        voidedAt = try c.decodeIfPresent(Date.self, forKey: .voidedAt)
+        photoIDs = try c.decode([PhotoID].self, forKey: .photoIDs)
+        guard (schemaVersion == 1 && packageID != nil && taskID == nil && kind != .completed)
+            || (schemaVersion == 2 && taskID?.isEmpty == false) else {
+            throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: c, debugDescription: "Unsupported or malformed work outcome.")
+        }
+    }
 }
+
+/// Compatibility spelling; not another ledger or persistent collection.
+public typealias DeliveryOutcome = TaskOutcome
 
 // MARK: - Proof of delivery
 

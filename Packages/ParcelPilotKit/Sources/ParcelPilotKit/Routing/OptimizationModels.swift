@@ -93,7 +93,7 @@ public struct UnassignedStop: Codable, Hashable, Sendable {
 /// Stop that was not sent to the optimizer, with the reason.
 public struct ExcludedStop: Codable, Hashable, Sendable {
     public enum Reason: String, Codable, Hashable, Sendable {
-        case completed, addressNotVerified, noUsableLocation, noPendingPackages, onlySkippedPackages
+        case completed, addressNotVerified, noUsableLocation, noPendingPackages, onlySkippedPackages, unsupportedTasks
     }
     public var stopID: StopID
     public var reason: Reason
@@ -101,6 +101,7 @@ public struct ExcludedStop: Codable, Hashable, Sendable {
 
     public var explanation: String {
         switch reason {
+        case .unsupportedTasks: return "Required work needs a compatible app or correction before planning."
         case .completed: return "Already handled."
         case .addressNotVerified: return "Address not verified — review it to include this stop."
         case .noUsableLocation: return "No usable location. Refresh the address or place a pin."

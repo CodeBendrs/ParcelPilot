@@ -24,13 +24,19 @@ public struct DemoOptimizer: Sendable {
 
     public enum Failure: Error, Equatable, Sendable {
         case missingStart
+        case missingEnd
+        case arrivalDeadlineConflict
         case noEligibleStops
+        case unsupportedWork
         case tooManyStops(limit: Int)
 
         public var issue: PlanIssue {
             switch self {
             case .missingStart: return PlanIssue(code: "missing-origin", message: "Set a start location (or use your current location) before optimizing.", suggestions: ["Add a start location in route settings.", "Optimize from your current location."])
+            case .missingEnd: return PlanIssue(code: "missing-end", message: "Set a verified warehouse location before planning a latest arrival time.", suggestions: ["Set Start to your warehouse and enable Return to start, or choose an End location."])
+            case .arrivalDeadlineConflict: return PlanIssue(code: "arrival-deadline-conflict", message: "The estimated route finishes after your latest arrival time, including the drive back and required break.", suggestions: ["Leave earlier.", "Set a later arrival time.", "Move some stops to another route."])
             case .noEligibleStops: return PlanIssue(code: "no-eligible-stops", message: "There are no verified stops left to plan.", suggestions: ["Review stops that need address verification."])
+            case .unsupportedWork: return PlanIssue(code: "unsupported-work", message: "Some required work cannot be interpreted safely.", suggestions: ["Review the route with a compatible app before planning."])
             case let .tooManyStops(limit): return PlanIssue(code: "too-many-stops", message: "Routes can optimize up to \(limit) stops at once.", suggestions: ["Split the route into two routes."])
             }
         }
@@ -48,6 +54,7 @@ public struct DemoOptimizer: Sendable {
     public func optimize(snapshot: RouteSnapshot, options: OptimizationOptions, requestID: String, now: Date) throws -> OptimizationProposal {
         let route = snapshot.route
         let eligibility = Eligibility.evaluate(snapshot, now: now, demoMode: true)
+        guard !snapshot.hasUnsupportedRequiredWork else { throw Failure.unsupportedWork }
         guard !eligibility.eligible.isEmpty else { throw Failure.noEligibleStops }
         guard eligibility.eligible.count <= RouteLimits.maxEligibleStopsPerOptimization else {
             throw Failure.tooManyStops(limit: RouteLimits.maxEligibleStopsPerOptimization)
@@ -65,10 +72,13 @@ public struct DemoOptimizer: Sendable {
         }
         var end: GeoPoint?
         if route.returnToStart, let p = route.start?.located, p.isUsable(at: now) { end = p.point }
-        if let p = route.end?.located, p.isUsable(at: now) { end = p.point }
+        if !route.returnToStart, let p = route.end?.located, p.isUsable(at: now) { end = p.point }
+        let latestArrival = route.latestArrivalMinute.flatMap { WallClock.instant(route: route, minute: $0) }
+        if route.latestArrivalMinute != nil, end == nil { throw Failure.missingEnd }
 
         let plannedDeparture = WallClock.instant(route: route, minute: route.departureMinute) ?? now
         let departure = options.departNow ? max(now, plannedDeparture) : plannedDeparture
+        if let latestArrival, latestArrival <= departure { throw Failure.arrivalDeadlineConflict }
 
         let nodes: [Node] = eligibility.eligible.map { stop in
             let w = stop.timeWindow
@@ -125,9 +135,9 @@ public struct DemoOptimizer: Sendable {
         // Improvement: 2-opt on the middle section, accepting moves that lower total cost.
         if order.count > 3 {
             let matrix = DistanceMatrix(points: nodes.map(\.point) + [origin] + (end.map { [$0] } ?? []), detourFactor: detourFactor, hasEnd: end != nil)
-            let timeConstrained = breakWindow != nil || nodes.contains { $0.hardStart != nil || $0.hardEnd != nil || $0.softEnd != nil }
+            let timeConstrained = latestArrival != nil || breakWindow != nil || nodes.contains { $0.hardStart != nil || $0.hardEnd != nil || $0.softEnd != nil }
             if timeConstrained {
-                order = improveBySimulation(order, head: head, tail: tail, nodes: nodes, matrix: matrix, end: end != nil, departure: departure, breakWindow: breakWindow)
+                order = improveBySimulation(order, head: head, tail: tail, nodes: nodes, matrix: matrix, end: end != nil, departure: departure, breakWindow: breakWindow, latestArrival: latestArrival)
             } else {
                 // Without windows or breaks the cost is linear in distance, so a reversal's effect is
                 // exact from the four edges it changes.
@@ -149,6 +159,7 @@ public struct DemoOptimizer: Sendable {
         }
 
         let visits = sim.visits
+        if let latestArrival, sim.end > latestArrival { throw Failure.arrivalDeadlineConflict }
         return OptimizationProposal(
             requestID: requestID,
             routeID: route.id,
@@ -219,12 +230,12 @@ public struct DemoOptimizer: Sendable {
         return order
     }
 
-    func improveBySimulation(_ start: [Int], head: [Int], tail: [Int], nodes: [Node], matrix: DistanceMatrix, end: Bool, departure: Date, breakWindow: (Date, Date, TimeInterval)?) -> [Int] {
+    func improveBySimulation(_ start: [Int], head: [Int], tail: [Int], nodes: [Node], matrix: DistanceMatrix, end: Bool, departure: Date, breakWindow: (Date, Date, TimeInterval)?, latestArrival: Date?) -> [Int] {
         var order = start
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: improvementBudget)
         var full = head + order + tail
-        var bestCost = scheduleCost(full, nodes: nodes, matrix: matrix, end: end, departure: departure, breakWindow: breakWindow)
+        var bestCost = scheduleCost(full, nodes: nodes, matrix: matrix, end: end, departure: departure, breakWindow: breakWindow, latestArrival: latestArrival)
         let offset = head.count
         passes: for _ in 0..<maxImprovementPasses {
             var improved = false
@@ -232,7 +243,7 @@ public struct DemoOptimizer: Sendable {
                 if clock.now > deadline { break passes }
                 for j in (i + 1)..<order.count {
                     full[(offset + i)...(offset + j)].reverse()
-                    let c = scheduleCost(full, nodes: nodes, matrix: matrix, end: end, departure: departure, breakWindow: breakWindow)
+                    let c = scheduleCost(full, nodes: nodes, matrix: matrix, end: end, departure: departure, breakWindow: breakWindow, latestArrival: latestArrival)
                     if c + 1e-6 < bestCost {
                         bestCost = c
                         improved = true
@@ -248,7 +259,7 @@ public struct DemoOptimizer: Sendable {
     }
 
     /// Allocation-free equivalent of `simulate(...).cost`, used inside the improvement loop.
-    func scheduleCost(_ order: [Int], nodes: [Node], matrix: DistanceMatrix, end: Bool, departure: Date, breakWindow: (Date, Date, TimeInterval)?) -> Double {
+    func scheduleCost(_ order: [Int], nodes: [Node], matrix: DistanceMatrix, end: Bool, departure: Date, breakWindow: (Date, Date, TimeInterval)?, latestArrival: Date? = nil) -> Double {
         let t0 = departure.timeIntervalSinceReferenceDate
         var clock = t0
         var position = matrix.originIndex
@@ -284,9 +295,11 @@ public struct DemoOptimizer: Sendable {
             clock += d / averageSpeedMetersPerSecond
         }
         if !breakTaken, breakWindow != nil {
-            let start = min(clock, breakLatest)
-            clock = max(clock, start + breakDuration)
+            let start = max(clock, breakEarliest)
+            if start > breakLatest { penalty += 1_000_000 }
+            clock = start + breakDuration
         }
+        if let latestArrival, clock > latestArrival.timeIntervalSinceReferenceDate { penalty += 10_000_000 + (clock - latestArrival.timeIntervalSinceReferenceDate) * 100 }
         return (clock - t0) + meters * 0.05 + penalty + (violation ? 10_000_000 : 0)
     }
 
@@ -355,12 +368,14 @@ public struct DemoOptimizer: Sendable {
             meters += d
             clock = clock.addingTimeInterval(d / averageSpeedMetersPerSecond)
         }
-        if !breakTaken, let (_, latest, duration) = breakWindow {
-            // Route ends before the break window opens: take it at the end so the plan still shows it.
-            let start = min(clock, latest)
+        if !breakTaken, let (earliest, latest, duration) = breakWindow {
+            // Wait for the required break window even when deliveries finish before it opens.
+            let start = max(clock, earliest)
+            if start > latest { penalty += 1_000_000 }
+            wait += max(0, start.timeIntervalSince(clock))
             breaks.append(PlannedBreak(start: start, durationSeconds: Int(duration)))
             breakTime += duration
-            clock = max(clock, start.addingTimeInterval(duration))
+            clock = start.addingTimeInterval(duration)
         }
         let total = clock.timeIntervalSince(departure)
         let metrics = PlanMetrics(routeStart: departure, routeEnd: clock, travelSeconds: Int(travel), travelMeters: meters, serviceSeconds: Int(service), waitSeconds: Int(wait), breakSeconds: Int(breakTime))
