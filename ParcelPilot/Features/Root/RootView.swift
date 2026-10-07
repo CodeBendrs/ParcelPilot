@@ -1,5 +1,4 @@
 import AuthenticationServices
-import GoogleSignInSwift
 import SwiftUI
 
 struct RootView: View {
@@ -48,12 +47,12 @@ struct BrandHeader: View {
         VStack(spacing: Theme.Space.m) {
             Image(systemName: "shippingbox.and.arrow.backward.fill")
                 .font(.system(size: 56))
-                .foregroundStyle(Theme.brand, Theme.teal)
+                .foregroundStyle(Theme.brand, Theme.brand)
                 .accessibilityHidden(true)
             Text("ParcelPilot").font(.largeTitle.bold())
             Text("Scan labels, plan the route, deliver with fewer taps.")
                 .font(.title3)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.neutral)
                 .multilineTextAlignment(.center)
         }
         .padding(.top, Theme.Space.xxl)
@@ -67,89 +66,181 @@ struct SignInView: View {
     @State private var working = false
     @State private var showEmail = false
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .largeTitle) private var welcomeTitleSize: CGFloat = 40
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: Theme.Space.xl) {
-                BrandHeader()
-                VStack(spacing: Theme.Space.m) {
-                    googleButton
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    brandLockup
 
-                    Button {
-                        showEmail = true
-                    } label: {
-                        Label("Continue with email", systemImage: "envelope")
-                    }
-                    .buttonStyle(PrimaryActionButtonStyle(filled: false))
-                    .disabled(working)
-                    .accessibilityIdentifier("continueWithEmail")
-
-                    if FirebaseSession.appleDeveloperProgram {
-                        SignInWithAppleButton(.signIn) { request in
-                            nonce = FirebaseSession.makeNonce()
-                            request.requestedScopes = []
-                            request.nonce = FirebaseSession.sha256(nonce)
-                        } onCompletion: { result in
-                            handleApple(result)
-                        }
-                        .signInWithAppleButtonStyle(.black)
-                        .frame(height: Theme.primaryActionHeight)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.l, style: .continuous))
-                        .disabled(working)
-                        .accessibilityIdentifier("signInWithApple")
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Image("SignInRoute")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                            .frame(height: min(232, geometry.size.height * 0.28))
+                            .padding(.top, geometry.size.height < 650 ? 16 : 32)
+                            .accessibilityHidden(true)
                     }
 
-                    if case .emulator = FirebaseBootstrap.mode {
-                        Button {
-                            Task { await run { try await coordinator.session?.signInForEmulator() } }
-                        } label: {
-                            Label("Sign in with emulator test account", systemImage: "hammer")
-                        }
-                        .buttonStyle(PrimaryActionButtonStyle(tint: Theme.teal, filled: false))
-                        .accessibilityIdentifier("emulatorSignIn")
-                        Text("Local Firebase Emulator Suite — test data only.").font(.caption).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Ready for your\nnext route?")
+                            .font(.system(size: welcomeTitleSize, weight: .bold))
+                            .tracking(-0.8)
+                            .foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("Sign in to scan, plan, and deliver.")
+                            .font(.body)
+                            .foregroundStyle(Theme.neutral)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .padding(.top, geometry.size.height < 650 || dynamicTypeSize.isAccessibilitySize ? 24 : 40)
+
+                    Spacer(minLength: geometry.size.height < 650 ? 24 : 32)
+                    signInActions
+
+                    if working {
+                        ProgressView("Signing in…")
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 16)
+                    }
+                    if let notice = coordinator.session?.signedOutNotice {
+                        Banner(symbol: "person.crop.circle.badge.exclamationmark", text: notice, tone: .warning)
+                            .accessibilityIdentifier("signedOutNotice")
+                            .padding(.top, 16)
+                    }
+                    if let error {
+                        Banner(symbol: "exclamationmark.triangle.fill", text: error, tone: .danger)
+                            .accessibilityIdentifier("signInError")
+                            .padding(.top, 16)
+                    }
+
+                    Spacer(minLength: 32)
+                    Text("Delete your account and data anytime\nin Settings.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.neutral)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity)
                 }
-                if working { ProgressView("Signing in…") }
-                if let notice = coordinator.session?.signedOutNotice {
-                    Banner(symbol: "person.crop.circle.badge.exclamationmark", text: notice, tone: .warning)
-                        .accessibilityIdentifier("signedOutNotice")
-                }
-                if let error {
-                    Banner(symbol: "exclamationmark.triangle.fill", text: error, tone: .danger)
-                }
-                Text("ParcelPilot uses your sign-in only to keep your routes in sync across your devices. Delete your account and data any time in Settings.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
+                .padding(.top, 16)
+                .padding(.bottom, 16)
+                .frame(maxWidth: 460)
+                .frame(minHeight: geometry.size.height)
+                .frame(maxWidth: .infinity)
             }
-            .padding(Theme.Space.xl)
-            .frame(maxWidth: 560)
-            .frame(maxWidth: .infinity)
+            .scrollIndicators(.hidden)
         }
-        .background(Theme.background)
+        .background(Theme.panel)
         .sheet(isPresented: $showEmail) { EmailSignInView() }
+    }
+
+    private var brandLockup: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "shippingbox.and.arrow.backward.fill")
+                .font(.system(size: 28))
+                .foregroundStyle(Theme.brand)
+                .accessibilityHidden(true)
+            Text("ParcelPilot")
+                .font(.title3.weight(.semibold))
+                .tracking(-0.5)
+                .foregroundStyle(Theme.ink)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var signInActions: some View {
+        VStack(spacing: 12) {
+            googleButton
+            Button { showEmail = true } label: {
+                Label("Continue with email", systemImage: "envelope")
+                    .font(.body.weight(.medium))
+            }
+            .buttonStyle(SignInActionButtonStyle(filled: true))
+            .disabled(working)
+            .accessibilityIdentifier("continueWithEmail")
+
+            if FirebaseSession.appleDeveloperProgram {
+                SignInWithAppleButton(.signIn) { request in
+                    nonce = FirebaseSession.makeNonce()
+                    request.requestedScopes = []
+                    request.nonce = FirebaseSession.sha256(nonce)
+                } onCompletion: { result in
+                    handleApple(result)
+                }
+                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                .frame(height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .disabled(working)
+                .accessibilityIdentifier("signInWithApple")
+            }
+
+            if case .emulator = FirebaseBootstrap.mode {
+                Button {
+                    Task { await run { try await coordinator.session?.signInForEmulator() } }
+                } label: {
+                    Label("Sign in with emulator test account", systemImage: "hammer")
+                }
+                .buttonStyle(SignInActionButtonStyle(filled: false))
+                .disabled(working)
+                .accessibilityIdentifier("emulatorSignIn")
+                Text("Local Firebase Emulator Suite — test data only.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.neutral)
+            }
+
+            Text("Keep your routes in sync.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.neutral)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 2)
+        }
     }
 
     @ViewBuilder private var googleButton: some View {
         switch coordinator.session?.googleSetup {
         case .ready:
-            // Google's own button, as its sign-in branding guidelines require.
-            GoogleSignInButton(scheme: colorScheme == .dark ? .dark : .light, style: .wide, state: working ? .disabled : .normal) {
+            Button {
                 Task { await run { try await coordinator.session?.signInWithGoogle() } }
+            } label: {
+                googleLabel
             }
+            .buttonStyle(SignInActionButtonStyle(filled: false, google: true))
             .disabled(working)
             .accessibilityIdentifier("continueWithGoogle")
         case let .unavailable(message):
-            VStack(spacing: Theme.Space.xs) {
-                GoogleSignInButton(scheme: colorScheme == .dark ? .dark : .light, style: .wide, state: .disabled) {}
+            VStack(spacing: 8) {
+                Button {} label: { googleLabel }
+                    .buttonStyle(SignInActionButtonStyle(filled: false, google: true))
                     .disabled(true)
                     .accessibilityIdentifier("continueWithGoogle")
-                Text(message).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(Theme.neutral)
+                    .multilineTextAlignment(.center)
             }
         case nil:
             EmptyView()
         }
+    }
+
+    private var googleLabel: some View {
+        Text("Sign in with Google")
+            .font(.custom("GoogleSans-Medium", size: 16, relativeTo: .body))
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 32)
+            .overlay(alignment: .leading) {
+                Image("GoogleSignInMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 20, height: 20)
+                    .accessibilityHidden(true)
+            }
     }
 
     private func run(_ action: @escaping () async throws -> Void) async {
@@ -178,6 +269,32 @@ struct SignInView: View {
                 }
             }
         }
+    }
+}
+
+/// Equal, flexible-height authentication controls; labels grow rather than clip at larger text sizes.
+private struct SignInActionButtonStyle: ButtonStyle {
+    var filled: Bool
+    var google = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .foregroundStyle(filled ? Theme.onBrand : Theme.ink)
+            .background(filled ? Theme.brand : Theme.panel,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                if !filled {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(google ? Theme.dynamic(light: 0x747775, dark: 0x8E918F) : Theme.hairline, lineWidth: 1)
+                }
+            }
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.5)
     }
 }
 

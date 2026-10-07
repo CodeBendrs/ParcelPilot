@@ -1,0 +1,11 @@
+{
+  "images": [
+    { "filename": "sign-in-route.png", "idiom": "universal" },
+    {
+      "filename": "sign-in-route-dark.png",
+      "idiom": "universal",
+      "appearances": [{ "appearance": "luminosity", "value": "dark" }]
+    }
+  ],
+  "info": { "author": "xcode", "version": 1 }
+}
