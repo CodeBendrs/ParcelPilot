@@ -23,7 +23,7 @@ struct AppConfiguration: Sendable {
         let plist = bundle.path(forResource: "GoogleService-Info", ofType: "plist")
         let rawKey = (bundle.object(forInfoDictionaryKey: "PPGoogleMapsAPIKey") as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
         let key = rawKey.isEmpty || rawKey.hasPrefix("$(") ? nil : rawKey
-        let useEmulators = defaults.bool(forKey: "PPUseFirebaseEmulators")
+        let useEmulators = defaults.bool(forKey: "PPUseFirebaseEmulators") || ProcessInfo.processInfo.environment["PP_EMULATOR"] == "1"
         return AppConfiguration(
             hasFirebaseConfig: plist != nil,
             mapsAPIKey: key,
@@ -45,6 +45,11 @@ enum AppMode: Equatable, Sendable {
     case demo
 
     var isDemo: Bool { self == .demo }
+    /// Generalized work writers stay disabled against production until compatible-client rollout
+    /// review. This is a service-graph choice, never a user-default or pilot-logging override.
+    var generalizedWorkAvailability: GeneralizedWorkAvailability {
+        switch self { case .production: .compatibilityReviewRequired; case .demo, .emulator: .development }
+    }
     var label: String {
         switch self {
         case .production: return "Account"
@@ -52,4 +57,9 @@ enum AppMode: Equatable, Sendable {
         case .demo: return "Demo mode"
         }
     }
+}
+
+enum GeneralizedWorkAvailability: Equatable, Sendable {
+    case compatibilityReviewRequired
+    case development
 }

@@ -1,3 +1,4 @@
+import FirebaseAuth
 import Foundation
 import Observation
 import ParcelPilotKit
@@ -53,17 +54,21 @@ final class AppServices {
         self.firestoreBackend = firestoreBackend
         self.localBackend = localBackend
         self.userLabel = userLabel
+        (store.backend as? DurableRouteBackend)?.networkAvailable = connectivity.isOnline
         connectivity.onChange { [weak self] online in
-            guard online, let self else { return }
-            Task { await self.backgroundSync() }
+            guard let self else { return }
+            (self.store.backend as? DurableRouteBackend)?.networkAvailable = online
+            if online { Task { await self.backgroundSync() } }
         }
         Task { await backgroundSync() }
     }
 
     /// Work that runs when the session starts and whenever the device comes back online.
     func backgroundSync() async {
+        guard connectivity.isOnline else { return }
         photos.resumeUploads()
-        if let backend = firestoreBackend { await backend.reconcileJournal() }
+        if let protected = store.backend as? DurableRouteBackend { await protected.synchronize() }
+        photos.resumeUploads() // Settle attachment metadata whose outbox receipt has just arrived.
         if let snapshot = store.current {
             await verifier.verifyPendingStops(in: snapshot, store: store)
             await verifier.refreshExpiredCoordinates(in: snapshot, store: store)
@@ -83,10 +88,36 @@ final class AppServices {
         }
     }
 
+    private static func protectedBackend(remote: RouteBackend, ownerID: String, namespace: String, transport: DurableCommandTransport?, authenticatedOwner: @escaping () -> String?, reset: Bool = false) -> DurableRouteBackend {
+        do {
+            let persistence = try ActiveRoutePersistence(ownerID: ownerID, databaseURL: ActiveRoutePersistence.defaultURL(ownerID: ownerID, namespace: namespace))
+            if reset { try persistence.eraseOperationalData() }
+            try persistence.compact()
+            return DurableRouteBackend(remote: remote, ownerID: ownerID, persistence: persistence, transport: transport, authenticatedOwner: authenticatedOwner)
+        } catch {
+            return DurableRouteBackend(remote: remote, ownerID: ownerID, persistence: nil, transport: transport, authenticatedOwner: authenticatedOwner,
+                initializationFailure: error as? LocalPersistenceFailure ?? .storage(error.localizedDescription))
+        }
+    }
+    func suspendOperationalSync() {
+        (store.backend as? DurableRouteBackend)?.suspend()
+        (photos as? FirebasePhotoStore)?.eraseLocal()
+    }
+
     static func demo(config: AppConfiguration) -> AppServices {
         let backend = LocalRouteBackend()
-        if config.resetDemoData { backend.eraseAll() }
-        let store = RouteStore(backend: backend)
+        let resetResult = config.resetDemoData ? backend.eraseAll() : nil
+        let protected = protectedBackend(remote: backend, ownerID: "demo", namespace: "demo", transport: nil, authenticatedOwner: { "demo" }, reset: config.resetDemoData)
+        if let persistence = protected.persistence, protected.issue == nil {
+            do {
+                for data in backend.db.routes.values where try persistence.snapshot(data.route.id) == nil {
+                    try persistence.pin(RouteSnapshot(route: data.route, stops: Array(data.stops.values), packages: Array(data.packages.values), outcomes: Array(data.outcomes.values), photos: Array(data.photos.values), tasks: Array(data.tasks.values)))
+                }
+            } catch { protected.quarantine(error) }
+        }
+        if let failure = backend.loadFailure { protected.quarantine(failure) }
+        if let resetResult, case let .failed(error) = resetResult { protected.quarantine(error) }
+        let store = RouteStore(backend: protected, generalizedWorkAvailability: AppMode.demo.generalizedWorkAvailability)
         let drafts = DraftStore(fileURL: DraftStore.defaultURL.deletingLastPathComponent().appendingPathComponent("demo-scan-drafts.json"))
         if config.resetDemoData { drafts.removeAll() }
         let photos = LocalPhotoStore(store: store)
@@ -94,7 +125,11 @@ final class AppServices {
         let services = AppServices(
             mode: .demo, store: store, settings: SettingsStore(backend: backend), drafts: drafts,
             resolver: DemoAddressResolver(), optimizer: LocalRouteOptimizer(), photos: photos,
-            account: DemoAccountService { backend.eraseAll(); drafts.removeAll(); photos.eraseAll() },
+            account: DemoAccountService {
+                if case let .failed(error) = backend.eraseAll() { throw error }
+                guard let persistence = protected.persistence else { throw protected.issue ?? .storage("Protected data couldn't be erased.") }
+                try persistence.eraseOperationalData(); drafts.removeAll(); try photos.eraseAll()
+            },
             connectivity: connectivity, location: LocationService(), journal: nil, mapStyle: .apple,
             firestoreBackend: nil, localBackend: backend, userLabel: "Demo driver (this iPhone only)"
         )
@@ -105,7 +140,15 @@ final class AppServices {
     static func firebase(uid: String, mode: AppMode, config: AppConfiguration, userLabel: String) -> AppServices {
         let journal = SyncJournal(fileURL: SyncJournal.defaultURL.deletingLastPathComponent().appendingPathComponent("sync-journal-\(uid).json"))
         let backend = FirestoreRouteBackend(uid: uid, db: FirebaseBootstrap.firestore(), journal: journal)
-        let store = RouteStore(backend: backend)
+        let protected = protectedBackend(remote: backend, ownerID: uid, namespace: mode == .production ? "firebase-production" : "firebase-emulator", transport: backend,
+            authenticatedOwner: { Auth.auth(app: backend.db.app).currentUser?.uid })
+        if let failure = journal.lastPersistenceFailure { protected.quarantine(failure) }
+        if let persistence = protected.persistence, protected.issue == nil {
+            do { try persistence.importLegacyJournal(journal.entries, sourceKey: "wp1-journal") }
+            catch { protected.quarantine(error) }
+        }
+        journal.bind(to: protected)
+        let store = RouteStore(backend: protected, generalizedWorkAvailability: mode.generalizedWorkAvailability)
         let connectivity = ConnectivityMonitor(forceOffline: config.simulateOffline)
         let providerKind: ProviderKind = mode == .production ? .google : .emulatorFake
         let drafts = DraftStore(fileURL: DraftStore.defaultURL.deletingLastPathComponent().appendingPathComponent("scan-drafts-\(uid).json"))
@@ -121,10 +164,20 @@ final class AppServices {
             resolver: CallableAddressResolver(connectivity: connectivity, provider: providerKind),
             optimizer: CallableRouteOptimizer(backend: backend, connectivity: connectivity, provider: providerKind),
             photos: photos,
-            account: FirebaseAccountService(cleanup: {
+            account: FirebaseAccountService(deletionCleanup: {
+                protected.suspend(); photos.eraseLocal()
+                // The existing account-deletion confirmation explicitly includes local/unsynced data.
+                guard let persistence = protected.persistence else { throw protected.issue ?? .storage("Protected data couldn't be erased.") }
+                try persistence.eraseOperationalData()
                 drafts.removeAll()
-                photos.eraseLocal()
+                try photos.eraseLegacyFilesAfterAccountDeletion()
+                journal.unbindForAccountDeletion()
                 journal.clear()
+                await FirebaseAccountService.clearFirestoreCache()
+            }, cleanup: {
+                protected.suspend()
+                photos.eraseLocal() // Pauses uploads; owner-bound operational bytes remain recoverable.
+                // Keep drafts and protected commands. Another UID receives a different store graph.
                 await FirebaseAccountService.clearFirestoreCache()
             }),
             connectivity: connectivity, location: LocationService(), journal: journal, mapStyle: mapStyle,

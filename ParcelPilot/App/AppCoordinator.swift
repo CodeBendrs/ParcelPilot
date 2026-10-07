@@ -73,6 +73,8 @@ final class AppCoordinator {
 
     private func apply(_ state: FirebaseSession.State) {
         if config.forceDemo { return }
+        if let existing = services, case let .signedIn(uid) = state, existing.firestoreBackend?.uid != uid { existing.suspendOperationalSync() }
+        if case .signedOut = state { services?.suspendOperationalSync() }
         switch state {
         case .loading: phase = .launching
         case .signedOut: phase = .signIn
@@ -89,6 +91,7 @@ final class AppCoordinator {
         if services?.mode == .demo {
             exitDemo()
         } else {
+            services?.suspendOperationalSync()
             phase = .signIn
         }
     }

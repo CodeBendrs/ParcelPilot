@@ -421,10 +421,12 @@ extension UIApplication {
 final class FirebaseAccountService: AccountService {
     private let functions: Functions
     private let cleanup: () async -> Void
+    private let deletionCleanup: (() async throws -> Void)?
 
-    init(functions: Functions = FirebaseBootstrap.functions(), cleanup: @escaping () async -> Void) {
+    init(functions: Functions = FirebaseBootstrap.functions(), deletionCleanup: (() async throws -> Void)? = nil, cleanup: @escaping () async -> Void) {
         self.functions = functions
         self.cleanup = cleanup
+        self.deletionCleanup = deletionCleanup
     }
 
     nonisolated private struct Empty: Codable {}
@@ -446,10 +448,16 @@ final class FirebaseAccountService: AccountService {
         } catch {
             throw CallableErrorMapper.map(error, connectivity: nil)
         }
-        await cleanup()
-        FirebaseSession.signOutRequested = true
-        GIDSignIn.sharedInstance.signOut()
-        try? Auth.auth().signOut()
+        defer {
+            FirebaseSession.signOutRequested = true
+            GIDSignIn.sharedInstance.signOut()
+            try? Auth.auth().signOut()
+        }
+        do {
+            if let deletionCleanup { try await deletionCleanup() } else { await cleanup() }
+        } catch {
+            throw ServiceError.unavailable("The cloud account was deleted, but this iPhone couldn't finish removing its local data. Original local data is preserved where cleanup failed. \(error.localizedDescription)")
+        }
     }
 
     func signOut() throws {
