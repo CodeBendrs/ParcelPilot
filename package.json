@@ -1,0 +1,9 @@
+{
+  "name": "parcelpilot",
+  "private": true,
+  "description": "Developer shortcuts for building and launching the native ParcelPilot iOS app.",
+  "scripts": {
+    "ios": "sh scripts/run-ios.sh live",
+    "ios:demo": "sh scripts/run-ios.sh demo"
+  }
+}
