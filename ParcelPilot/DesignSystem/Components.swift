@@ -44,7 +44,7 @@ struct PrimaryActionButtonStyle: ButtonStyle {
         configuration.label
             .font(.headline)
             .frame(maxWidth: .infinity, minHeight: Theme.primaryActionHeight)
-            .foregroundStyle(filled ? Color.white : tint)
+            .foregroundStyle(filled ? Theme.onBrand : tint)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.l, style: .continuous)
                     .fill(filled ? tint : tint.opacity(0.12))
@@ -62,10 +62,10 @@ struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .frame(minHeight: Theme.minTouch)
+            .frame(minHeight: 50)
             .padding(.horizontal, Theme.Space.m)
             .foregroundStyle(Theme.brand)
-            .background(Theme.brandSoft, in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+            .background(Theme.fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .opacity(configuration.isPressed ? 0.75 : 1)
     }
 }
@@ -94,7 +94,7 @@ struct StateMessageView: View {
                 .accessibilityHidden(true)
             VStack(spacing: Theme.Space.s) {
                 Text(title).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
-                Text(message).font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Text(message).font(.body).foregroundStyle(Theme.neutral).multilineTextAlignment(.center)
             }
             ForEach(actions) { action in
                 Button(role: action.role, action: action.handler) {
@@ -140,14 +140,7 @@ struct UnitBadge: View {
     var label: String
 
     var body: some View {
-        Text(label)
-            .font(.unit)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .foregroundStyle(Theme.teal)
-            .background(Theme.teal.opacity(0.14), in: RoundedRectangle(cornerRadius: Theme.Radius.s, style: .continuous))
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(Text(label.replacingOccurrences(of: "#", with: "Unit ")))
+        UnitTile(value: label.replacingOccurrences(of: "#", with: "").replacingOccurrences(of: "Unit ", with: ""))
     }
 }
 
@@ -158,22 +151,14 @@ struct StopNumberView: View {
     var size: CGFloat = 32
 
     var body: some View {
-        ZStack {
-            Circle().fill(status == .completed ? Theme.success : status == .skipped || status == .partial ? Theme.warning : Theme.brand)
-            if status == .completed {
-                Image(systemName: "checkmark").font(.system(size: size * 0.45, weight: .bold)).foregroundStyle(.white)
-            } else {
-                Text("\(number)").font(.system(size: size * 0.42, weight: .bold).monospacedDigit()).foregroundStyle(.white).minimumScaleFactor(0.6)
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        StopBadge(number: number, state: status == .completed ? .delivered : status == .partial ? .partial : status == .skipped ? .skipped : status == .empty ? .excluded : .pending, size: size)
     }
 }
 
 struct DemoBadge: View {
     var body: some View {
         StatusBadge(text: "Demo", symbol: "theatermasks.fill", tone: .demo, compact: true)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .accessibilityLabel("Demo mode. Data stays on this iPhone and locations are synthetic.")
     }
 }
@@ -185,26 +170,35 @@ struct UndoToast: View {
     var tone: StatusTone
     var undo: (() -> Void)?
     var extra: (title: String, action: () -> Void)?
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        HStack(spacing: Theme.Space.m) {
-            Image(systemName: symbol).foregroundStyle(tone.color).font(.title3).accessibilityHidden(true)
-            Text(message).font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading).lineLimit(3)
-            if let extra {
-                Button(extra.title, action: extra.action).font(.subheadline.weight(.semibold)).frame(minHeight: Theme.minTouch)
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 12))
+        layout {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).foregroundStyle(.white).font(.title3).accessibilityHidden(true)
+                Text(message).font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
             }
-            if let undo {
-                Button("Undo", action: undo)
-                    .font(.subheadline.weight(.bold))
-                    .frame(minWidth: Theme.minTouch, minHeight: Theme.minTouch)
-                    .accessibilityHint("Reverses the last action")
+            HStack(spacing: 12) {
+                if let extra {
+                    Button(extra.title, action: extra.action).font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: true, vertical: false).frame(minWidth: 44, minHeight: 44)
+                }
+                if let undo {
+                    Button("Undo", action: undo).font(.subheadline.weight(.bold))
+                        .fixedSize(horizontal: true, vertical: false).frame(minWidth: 44, minHeight: 44)
+                        .accessibilityHint("Reverses the last action")
+                }
             }
         }
-        .padding(.horizontal, Theme.Space.l)
-        .padding(.vertical, Theme.Space.s)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.l, style: .continuous))
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .foregroundStyle(.white).tint(.white)
+        .background(Color(UIColor(hex: 0x16181D)), in: RoundedRectangle(cornerRadius: 22))
         .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
-        .padding(.horizontal, Theme.Space.l)
+        .padding(.horizontal, 16)
+        .accessibilityShowsLargeContentViewer()
         .accessibilityElement(children: .contain)
     }
 }
@@ -213,7 +207,7 @@ struct UndoToast: View {
 struct ProvenanceText: View {
     var text: String
     var body: some View {
-        Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        Text(text).font(.footnote).foregroundStyle(Theme.neutral).fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -235,6 +229,7 @@ final class ToastCenter {
         var symbol: String
         var tone: StatusTone
         var undo: (() -> Void)?
+        var undoAcknowledged: (() -> Bool)?
         var extraTitle: String?
         var extra: (() -> Void)?
         static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
@@ -243,18 +238,43 @@ final class ToastCenter {
     private(set) var current: Toast?
     private var dismissTask: Task<Void, Never>?
 
-    func show(_ message: String, symbol: String, tone: StatusTone, undo: (() -> Void)? = nil, extraTitle: String? = nil, extra: (() -> Void)? = nil, seconds: Double = 8) {
-        current = Toast(message: message, symbol: symbol, tone: tone, undo: undo, extraTitle: extraTitle, extra: extra)
+    func show(_ message: String, symbol: String, tone: StatusTone, undoAcknowledged: (() -> Bool)? = nil, undo: (() -> Void)? = nil, extraTitle: String? = nil, extra: (() -> Void)? = nil, seconds: Double = 8) {
+        // Keep the existing Void callback available to legacy callers. Operational UI invokes
+        // performUndo instead, so a failed durable write cannot dismiss its retry affordance.
+        let compatibleUndo = undo ?? undoAcknowledged.map { checked in { _ = checked() } }
+        current = Toast(message: message, symbol: symbol, tone: tone, undo: compatibleUndo, undoAcknowledged: undoAcknowledged, extraTitle: extraTitle, extra: extra)
         UIAccessibility.post(notification: .announcement, argument: message)
         dismissTask?.cancel()
         let id = current!.id
         dismissTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            do {
+                try await Task.sleep(nanoseconds: UInt64(max(seconds, UIAccessibility.isVoiceOverRunning ? 30 : seconds) * 1_000_000_000))
+            } catch { return }
             if self?.current?.id == id { self?.current = nil }
         }
     }
 
-    func dismiss() { current = nil }
+    @discardableResult
+    func performUndo(for toast: Toast) -> Bool {
+        guard current?.id == toast.id else { return false }
+        if let checked = toast.undoAcknowledged {
+            guard checked() else {
+                dismissTask?.cancel(); dismissTask = nil
+                return false
+            }
+        } else if let undo = toast.undo {
+            undo()
+        } else { return false }
+        if current?.id == toast.id { dismiss() }
+        return true
+    }
+
+    func undoAction(for toast: Toast) -> (() -> Void)? {
+        guard toast.undo != nil || toast.undoAcknowledged != nil else { return nil }
+        return { [weak self] in _ = self?.performUndo(for: toast) }
+    }
+
+    func dismiss() { dismissTask?.cancel(); dismissTask = nil; current = nil }
 }
 
 struct ToastOverlay: ViewModifier {
@@ -262,12 +282,12 @@ struct ToastOverlay: ViewModifier {
     var center: ToastCenter
 
     func body(content: Content) -> some View {
-        // Top of the tab's safe area: never covers the tab bar or the pinned delivery actions.
-        content.overlay(alignment: .top) {
+        // Reserve space: Undo never covers navigation, search or pinned actions.
+        content.safeAreaInset(edge: .top, spacing: 0) {
             if let toast = center.current {
                 UndoToast(
                     message: toast.message, symbol: toast.symbol, tone: toast.tone,
-                    undo: toast.undo.map { undo in { undo(); center.dismiss() } },
+                    undo: center.undoAction(for: toast),
                     extra: toast.extraTitle.flatMap { title in toast.extra.map { (title, $0) } }
                 )
                 .padding(.top, Theme.Space.s)
@@ -290,7 +310,7 @@ struct FitOrScroll<Content: View>: View {
 
     var body: some View {
         ViewThatFits(in: .vertical) {
-            content()
+            content().fixedSize(horizontal: false, vertical: true)
             ScrollView { content().frame(maxWidth: .infinity) }
                 .scrollBounceBehavior(.basedOnSize)
         }

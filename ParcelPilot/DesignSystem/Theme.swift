@@ -13,22 +13,33 @@ enum Theme {
     }
 
     // Brand
-    static let brand = dynamic(light: 0x1F5AE0, dark: 0x6E9BFF)
-    static let teal = dynamic(light: 0x0B7A75, dark: 0x3CC8C1)
-    static let brandSoft = dynamic(light: 0xE8EFFD, dark: 0x1B2A4A)
+    static let brand = dynamic(light: 0x4338CA, dark: 0x9C97FF)
+    static let brandSoft = dynamic(light: 0xECEBFB, dark: 0x24233F)
 
     // Semantic
-    static let success = dynamic(light: 0x1A7F37, dark: 0x4CC163)
-    static let danger = dynamic(light: 0xC62828, dark: 0xFF7B72)
-    static let warning = dynamic(light: 0x9A5B00, dark: 0xF2B84B)
-    static let neutral = dynamic(light: 0x5B6472, dark: 0xA3ACBA)
+    static let success = dynamic(light: 0x177A3F, dark: 0x4CC97F)
+    static let danger = dynamic(light: 0xB42318, dark: 0xFF7B72)
+    static let warning = dynamic(light: 0x9A5700, dark: 0xF2B04B)
+    static let neutral = dynamic(light: 0x5A606C, dark: 0xA4A9B2)
     static let demo = dynamic(light: 0x7A3FD1, dark: 0xC3A1FF)
 
-    // Surfaces
-    static let background = Color(UIColor.systemGroupedBackground)
-    static let surface = Color(UIColor.secondarySystemGroupedBackground)
-    static let elevated = Color(UIColor.systemBackground)
-    static let separator = Color(UIColor.separator)
+    static let onBrand = dynamic(light: 0xFFFFFF, dark: 0x0E0F12)
+    static let dangerSoft = dynamic(light: 0xFBE6E4, dark: 0x3A1E1E)
+    static let warningSoft = dynamic(light: 0xFCF0DD, dark: 0x3A2E17)
+    static let reviewPin = dynamic(light: 0xB36500, dark: 0xF2B04B)
+    static let fill = dynamic(light: 0xF1F2F5, dark: 0x22252C)
+    static let panel = dynamic(light: 0xFFFFFF, dark: 0x17191E)
+    static let hairline = Color(UIColor { traits in
+        UIColor(hex: traits.accessibilityContrast == .high
+            ? (traits.userInterfaceStyle == .dark ? 0x737986 : 0x858A95)
+            : (traits.userInterfaceStyle == .dark ? 0x30343C : 0xE3E5EA))
+    })
+    static let ink = dynamic(light: 0x16181D, dark: 0xF2F3F5)
+    static let pinPending = dynamic(light: 0x16181D, dark: 0xE6E8EC)
+    static let background = dynamic(light: 0xF1F2F5, dark: 0x0E0F12)
+    static let surface = panel
+    static let elevated = panel
+    static let separator = hairline
 
     enum Space {
         static let xs: CGFloat = 4
@@ -48,7 +59,7 @@ enum Theme {
 
     /// Minimum interactive size (HIG): 44 pt. Primary delivery actions are taller.
     static let minTouch: CGFloat = 44
-    static let primaryActionHeight: CGFloat = 56
+    static let primaryActionHeight: CGFloat = 58
 }
 
 extension UIColor {
@@ -59,9 +70,11 @@ extension UIColor {
 
 extension Font {
     /// Address line on cards: large, semibold, scales with Dynamic Type.
-    static let address = Font.title2.weight(.semibold)
+    static let address = Font.system(.title, design: .rounded, weight: .bold)
     static let addressCompact = Font.headline
-    static let unit = Font.title3.weight(.bold).monospacedDigit()
+    static let unit = Font.system(.title, design: .monospaced, weight: .heavy)
+    static let locationCode = Font.system(.title3, design: .monospaced, weight: .heavy)
+    static let stopProgress = Font.system(.title3, design: .rounded, weight: .bold)
     static let metric = Font.headline.monospacedDigit()
 }
 
