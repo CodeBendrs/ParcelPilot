@@ -15,6 +15,8 @@ struct RouteEditorView: View {
     @State private var start: RoutePlace?
     @State private var end: RoutePlace?
     @State private var returnToStart = true
+    @State private var hasLatestArrival = false
+    @State private var latestArrivalMinute = 17 * 60
     @State private var serviceSeconds = 120
     @State private var hasBreak = false
     @State private var breakEarliest = 11 * 60 + 30
@@ -25,10 +27,18 @@ struct RouteEditorView: View {
     @State private var picking: PlaceTarget?
     @State private var locating = false
     @State private var error: String?
+    @State private var createdRoute: Route?
 
     enum PlaceTarget: String, Identifiable { case start, end; var id: String { rawValue } }
 
     private var tz: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
+    private var arrivalError: String? {
+        guard hasLatestArrival else { return nil }
+        if latestArrivalMinute >= 2880 { return "Choose an arrival time on the route date or the next day." }
+        if latestArrivalMinute <= departureMinute { return "Latest arrival must be after departure. Choose Next day for an overnight route." }
+        if (returnToStart ? start : end) == nil { return "Set your warehouse as Start and return to it, or choose an End location." }
+        return nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -45,6 +55,7 @@ struct RouteEditorView: View {
 
                 Section {
                     PlaceRow(title: "Start", place: start, empty: "Not set — needed to plan the route") { picking = .start } clear: { start = nil }
+                        .accessibilityIdentifier("routeStart")
                     Button {
                         Task { await useCurrentLocation() }
                     } label: {
@@ -54,11 +65,25 @@ struct RouteEditorView: View {
                     Toggle("Return to start", isOn: $returnToStart)
                     if !returnToStart {
                         PlaceRow(title: "End", place: end, empty: "Ends at the last stop") { picking = .end } clear: { end = nil }
+                            .accessibilityIdentifier("routeEnd")
+                    }
+                    Toggle("Latest arrival time", isOn: $hasLatestArrival)
+                        .accessibilityIdentifier("latestArrivalToggle")
+                    if hasLatestArrival {
+                        MinutePicker(title: returnToStart ? "Back by" : "Arrive by", minute: $latestArrivalMinute, timeZone: tz, allowNextDay: true)
+                            .accessibilityIdentifier("latestArrivalTime")
                     }
                 } header: {
                     Text("Start and end")
                 } footer: {
-                    Text("Your location is only used when you tap the button. You can always search for an address instead.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        if hasLatestArrival {
+                            Text(returnToStart ? "Set Start to your warehouse. The plan must get you back by this time, including the drive after your last delivery." : "Set End to your warehouse. The plan must arrive by this time, including the drive after your last delivery.")
+                            if let arrivalError { Text(arrivalError).foregroundStyle(Theme.danger) }
+                        } else {
+                            Text("Your location is only used when you tap the button. You can always search for an address instead.")
+                        }
+                    }
                 }
 
                 Section {
@@ -94,7 +119,7 @@ struct RouteEditorView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(route == nil ? "Create" : "Save") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || (hasBreak && breakLatest < breakEarliest))
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || arrivalError != nil || (hasBreak && breakLatest < breakEarliest))
                         .accessibilityIdentifier("saveRoute")
                 }
             }
@@ -124,6 +149,8 @@ struct RouteEditorView: View {
         start = route.start
         end = route.end
         returnToStart = route.returnToStart
+        hasLatestArrival = route.latestArrivalMinute != nil
+        latestArrivalMinute = route.latestArrivalMinute ?? min(2879, max(17 * 60, departureMinute + 60))
         serviceSeconds = route.defaultServiceSeconds
         if let b = route.breakRule {
             hasBreak = true
@@ -138,7 +165,7 @@ struct RouteEditorView: View {
     private func save() {
         let date = WallClock.ServiceDate.today(in: tz, now: serviceDate).iso
         let breakRule = hasBreak ? BreakRequirement(earliestStartMinute: breakEarliest, latestStartMinute: breakLatest, durationSeconds: breakMinutes * 60) : nil
-        if var r = route {
+        if var r = route ?? createdRoute {
             r.name = String(name.prefix(80))
             r.serviceDate = date
             r.timeZoneID = timeZoneID
@@ -146,19 +173,34 @@ struct RouteEditorView: View {
             r.start = start
             r.end = returnToStart ? nil : end
             r.returnToStart = returnToStart
+            r.latestArrivalMinute = hasLatestArrival ? latestArrivalMinute : nil
             r.defaultServiceSeconds = serviceSeconds
             r.breakRule = breakRule
             r.objective = objective
             r.considerTraffic = considerTraffic
-            services.store.updateSettings(r)
+            guard services.store.updateSettings(r).isCommitted else {
+                error = services.store.persistenceIssue ?? "The route couldn't be saved on this iPhone. Try again."
+                return
+            }
         } else {
             var created = services.store.createRoute(name: String(name.prefix(80)), serviceDate: date, timeZoneID: timeZoneID, departureMinute: departureMinute, defaultServiceSeconds: serviceSeconds, start: start, returnToStart: returnToStart)
-            if breakRule != nil || !returnToStart || objective != .balanced || !considerTraffic {
+            guard services.store.lastCommitResult.isCommitted else {
+                error = services.store.persistenceIssue ?? "The route couldn't be created on this iPhone. Try again."
+                return
+            }
+            createdRoute = created
+            if breakRule != nil || hasLatestArrival || !returnToStart || objective != .balanced || !considerTraffic {
                 created.end = returnToStart ? nil : end
+                created.latestArrivalMinute = hasLatestArrival ? latestArrivalMinute : nil
                 created.breakRule = breakRule
                 created.objective = objective
                 created.considerTraffic = considerTraffic
-                services.store.updateSettings(created)
+                guard services.store.updateSettings(created).isCommitted else {
+                    // Reuse the durably created route when the driver retries these settings.
+                    createdRoute = created
+                    error = services.store.persistenceIssue ?? "The route settings couldn't be saved. Try again."
+                    return
+                }
             }
         }
         dismiss()
@@ -196,7 +238,7 @@ struct PlaceRow: View {
                 if place != nil {
                     Button("Clear", role: .destructive, action: clear).buttonStyle(.borderless)
                 } else {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    Image(systemName: "magnifyingglass").foregroundStyle(Theme.neutral)
                 }
             }
             .frame(minHeight: Theme.minTouch)
