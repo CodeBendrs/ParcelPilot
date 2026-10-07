@@ -49,21 +49,33 @@ Config/                       Base.xcconfig (+ your git-ignored Secrets.xcconfig
 Open `ParcelPilot.xcodeproj` and run the **ParcelPilot** scheme on an iPhone Simulator.
 Sign in with Google or email. No build offers a demo-mode button.
 
+From the repository root in a terminal:
+```bash
+npm run ios
+```
+This boots and opens an available iPhone Simulator, builds with ad-hoc signing, installs the app
+and launches it with the bundled live Firebase configuration. Sign in to use your account.
+The viewer is detected from the selected Xcode installation (Simulator or Device Hub).
+Build output is saved to `build/ios-build.log`.
+
+For a local synthetic route:
+```bash
+npm run ios:demo
+```
+Choose another simulator by name or UDID:
+```bash
+npm run ios -- --simulator "iPhone 17 Pro Max"
+```
+Both commands preserve existing app data. The default prefers Atlas iPhone 17, then iPhone 17,
+then another available iPhone. `SIMULATOR` can also select a device.
+Run `npm run ios -- --help` for details. The root shortcuts have no npm package dependencies;
+the backend's dependencies remain in `firebase/` and `firebase/functions/`.
+
 For automated UI tests and screenshots, the explicit `-PPDemoMode YES` launch argument still
 provides a local fixture session. Everything stays on the device; locations are synthetic and
 labelled as such; route order uses a clearly labelled straight-line estimate. Previously selected
 demo sessions no longer resume on a normal launch; their local data is retained.
 
-Command line fixture session (replace `com.example.parcelpilot` with your configured bundle identifier):
-```bash
-xcodebuild -project ParcelPilot.xcodeproj -scheme ParcelPilot -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath build/DerivedData.noindex build CODE_SIGNING_ALLOWED=NO
-```
-```bash
-xcrun simctl install "iPhone 17" build/DerivedData.noindex/Build/Products/Debug-iphonesimulator/ParcelPilot.app
-```
-```bash
-xcrun simctl launch "iPhone 17" com.example.parcelpilot -PPDemoMode YES -PPSeedDemoRoute YES
-```
 Useful launch arguments: `-PPResetDemoData YES`, `-PPSimulateOffline YES`, `-PPDisableAnimations YES`.
 
 ### 2. Local Firebase stack — real SDKs, rules and functions, still no billing
@@ -84,6 +96,11 @@ xcrun simctl launch "iPhone 17" com.example.parcelpilot -PPUseFirebaseEmulators 
 Sign in with **Sign in with emulator test account** (anonymous auth, emulator only).
 
 ### 3. Production configuration
+The existing Firebase project is **`parcelpilot-976f6`**. On October 4, all five backend functions
+were confirmed ACTIVE on Node.js 22 in Montréal, with Google-provider mode and callable App Check
+enforcement disabled. Deployment is confirmed; production workflow health is not established by
+the local emulator tests. See [current deployment status](IMPLEMENTATION_STATUS.md).
+
 Follow [docs/COST_AND_SETUP.md](docs/COST_AND_SETUP.md): Firebase project in `northamerica-northeast1`,
 Google + email sign-in, App Check, Route Optimization + Geocoding enabled for the functions' service
 account, a restricted Maps SDK for iOS key. Put `GoogleService-Info.plist` in `ParcelPilot/` and copy
@@ -108,7 +125,8 @@ Joining the existing project as a second developer? See [docs/TEAM_SETUP.md](doc
 
 Builds are ad-hoc signed (`CODE_SIGN_IDENTITY=-`): Firebase Auth keeps its session in the keychain,
 which unsigned Simulator builds can't use. Tested on iOS 26.5 and iOS 18.5 Simulators; latest results
-are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md#1-evidence--what-was-run).
+are in the [October 4 audit](docs/SIMULATOR_AUDIT_2026-10-04.md#current-verification); the older
+baseline is retained in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md#1-local-evidence--october-3-baseline).
 
 Regenerate fixtures: `swift scripts/generate-label-fixtures.swift`; app icon: `swift scripts/generate-app-icon.swift`.
 

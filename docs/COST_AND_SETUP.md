@@ -1,7 +1,14 @@
 # Cost and setup guide
 
-Nothing in this repository creates billable resources. Every step below that enables billing or
-deploys is something **you** run, deliberately. Prices were checked on 2026-10-03 against
+The existing project **`parcelpilot-976f6` has a deployed backend**. On 2026-10-04, a read-only
+Firebase CLI check confirmed all five functions ACTIVE in `northamerica-northeast1`, running
+Node.js 22 with `PROVIDER_MODE=google` and callable **`ENFORCE_APP_CHECK=false`**. See
+[IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md) for the evidence and verification limits.
+
+The steps below describe initial setup and future configuration/deployments; they do not mean the
+existing project is undeployed. Billing changes and deployments must be run deliberately.
+The deployment audit did not inspect billing/spend or exercise paid Google API calls.
+Prices were checked on 2026-10-03 against
 https://developers.google.com/maps/billing-and-pricing/pricing (USD, per calendar month) — recheck
 before launch.
 
@@ -99,6 +106,12 @@ key only a paid account can create, so release builds can't get App Check tokens
 the App Check debug provider (register the token printed in Xcode's console under App Check → Manage
 debug tokens). Until you have the paid membership, deploy with `ENFORCE_APP_CHECK=false`; the
 server-side quotas still apply.
+
+The October 4 deployment check confirmed this disabled callable-enforcement setting in the live
+project. It did not inspect Firestore or Storage enforcement, which are separate settings. Verify
+that release builds obtain valid attestation tokens and development builds use registered debug
+tokens before enabling enforcement; otherwise legitimate clients can be rejected. See
+[Firebase's enforcement guide](https://firebase.google.com/docs/app-check/cloud-functions).
 
 ## 5. Deploy (only when you decide to)
 

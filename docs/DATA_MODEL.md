@@ -43,6 +43,7 @@ Cloud Storage users/{uid}/routes/{routeId}/pod/{photoId}.jpg   proof-of-delivery
 | serviceDate | `YYYY-MM-DD` | Driver |
 | timeZoneID | IANA `America/*` | Driver — every wall-clock time on the route uses it |
 | departureMinute | int, wall-clock minutes after local midnight (≥1440 = next day) | Driver |
+| latestArrivalMinute? | int > departureMinute and < 2880; hard latest arrival at Start when returning, otherwise End; includes return travel, service, waiting and required break | Driver; omitted when disabled, older routes have no limit |
 | start?, end? | RoutePlace `{label, address?, located?, placeID?}` | label/address: Driver; `located` from Google: Provider (≤30 days); device location / pins: Driver |
 | returnToStart | bool | Driver |
 | defaultServiceSeconds | int | Driver |

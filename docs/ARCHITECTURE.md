@@ -143,12 +143,12 @@ items note what's missing. Evidence and commands: [IMPLEMENTATION_STATUS.md](../
 - [x] C5 Skipped/failed retry or exclude; resume after relaunch; actual timestamps
 - [x] D1 History summaries with distance source
 - [x] D2 Settings: navigation app, units, default service duration
-- [ ] D3 Sign-in (Google, email; Apple when enabled), sign out, account + data deletion (incl. Apple token revocation) — *email sign-in and deletion verified on emulator; Google needs your Firebase project; Sign in with Apple needs the paid Apple Developer Program (Apple Developer team)*
+- [ ] D3 Sign-in (Google, email; Apple when enabled), sign out, account + data deletion (incl. Apple token revocation) — *email sign-in and deletion verified on emulator; production Firebase project exists, live sign-in unverified; Sign in with Apple needs the paid Apple Developer Program (Apple Developer team)*
 - [x] D4 Demo mode without credentials, clearly identified
 - [x] D5 Proof-of-delivery photos: capture, upload, view, delete, durable pending-upload recovery — *camera capture is device-only*
 
 ### Routing correctness
-- [ ] R1 Real road-network optimizer (Google) in production; demo heuristic labelled — *implemented; live Google calls blocked (billing)*
+- [ ] R1 Real road-network optimizer (Google) in production; demo heuristic labelled — *functions confirmed ACTIVE in Google-provider mode on October 4; successful live Google requests and production configuration remain unverified; see IMPLEMENTATION_STATUS.md*
 - [x] R2 Every eligible stop exactly once or explained; mandatory shipments; non-zero objective
 - [x] R3 Start/end, hard windows, service duration, breaks, pins as real constraints
 - [x] R4 Infeasibility reported with suggested changes; nothing dropped silently
@@ -180,4 +180,4 @@ items note what's missing. Evidence and commands: [IMPLEMENTATION_STATUS.md](../
 - [x] E8 Edit during optimization → stale result rejected, edit preserved
 - [ ] E9 Navigation app opens building address; same stop shown on return — *URLs verified; app round trip is a device check*
 - [x] E10 Cross-user access denied (rules + callables); quota and missing config produce useful errors
-- [ ] E11 10/50/200-stop timings, mocked vs live labelled; real-device gaps listed — *mocked timings recorded; live timings blocked*
+- [ ] E11 10/50/200-stop timings, mocked vs live labelled; real-device gaps listed — *mocked timings recorded; live timings not measured*
