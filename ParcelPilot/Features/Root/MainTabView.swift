@@ -23,12 +23,10 @@ struct MainTabView: View {
     var body: some View {
         TabView(selection: $tab) {
             RouteTab(selectTab: { tab = $0 })
-                .toasts(toasts)
                 .tabItem { Label("Route", systemImage: "map") }
                 .tag(AppTab.route)
                 .accessibilityIdentifier("tab.route")
             ScanTab(selectTab: { tab = $0 })
-                .toasts(toasts)
                 .tabItem { Label("Scan", systemImage: "barcode.viewfinder") }
                 .tag(AppTab.scan)
             HistoryView(selectTab: { tab = $0 })
@@ -41,6 +39,12 @@ struct MainTabView: View {
                 .tag(AppTab.settings)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
+            if let issue = services.store.persistenceIssue ?? services.photos.storageIssue {
+                Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger)
+                    .padding(.horizontal, Theme.Space.l)
+                    .padding(.bottom, Theme.Space.xs)
+                    .accessibilityIdentifier("localPersistenceBanner")
+            }
             if coordinator.session?.needsSignInAgain == true {
                 Banner(symbol: "person.crop.circle.badge.exclamationmark", text: "Sign in again — changes on this iPhone aren't syncing.", tone: .danger, actionTitle: "Fix") { showSessionProblem = true }
                     .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.m))
@@ -70,7 +74,7 @@ struct MainTabView: View {
 }
 
 /// The saved sign-in no longer works. The driver chooses: sign in again with the same account (queued
-/// changes then sync) or sign out (this iPhone's copy, including unsynced changes, is removed).
+/// changes then sync) or sign out while protected work remains bound to its original account.
 struct SessionProblemView: View {
     @Environment(AppServices.self) private var services
     @Environment(AppCoordinator.self) private var coordinator
@@ -79,7 +83,7 @@ struct SessionProblemView: View {
     @State private var confirmSignOut = false
 
     var body: some View {
-        let pendingChanges = services.store.currentPendingKeys.count + services.store.pendingRouteKeys.count
+        let pendingChanges = services.store.currentPendingKeys.union(services.store.pendingRouteKeys).count
         let pendingPhotos = services.photos.pending.count
         NavigationStack {
             Form {
@@ -91,7 +95,7 @@ struct SessionProblemView: View {
                 }
                 if coordinator.session?.account?.method == .emulator {
                     Section {
-                        Text("Emulator test accounts can't sign in again. Sign out to start a new test session.").foregroundStyle(.secondary)
+                        Text("Emulator test accounts can't sign in again. Sign out to start a new test session.").foregroundStyle(Theme.neutral)
                     }
                 } else {
                     Section {
@@ -107,14 +111,14 @@ struct SessionProblemView: View {
                     Button("Sign out", role: .destructive) { confirmSignOut = true }
                         .accessibilityIdentifier("sessionSignOut")
                 } footer: {
-                    Text("Signing out removes this iPhone's copy\(pendingChanges + pendingPhotos > 0 ? ", including the changes that haven't synced" : "").")
+                    Text("Saved work and queued photos stay on this iPhone for this account. Sign in with the same account to recover and sync them.")
                 }
                 if let error { Banner(symbol: "exclamationmark.triangle.fill", text: error, tone: .danger) }
             }
             .navigationTitle("Sign in again")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
-            .confirmationDialog("Sign out and remove this iPhone's copy?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
                 Button("Sign out", role: .destructive) {
                     do {
                         try services.account.signOut()
@@ -200,12 +204,14 @@ struct SyncStatusIndicator: View {
 
     @ViewBuilder private var label: some View {
         let failed = services.journal?.failed.count ?? 0
-        let pendingDocs = services.store.currentPendingKeys.count + services.store.pendingRouteKeys.count
+        let pendingDocs = services.store.currentPendingKeys.union(services.store.pendingRouteKeys).count
         let pendingPhotos = services.photos.pending.count
-        if services.mode.isDemo {
+        if services.store.persistenceIssue != nil || services.photos.storageIssue != nil {
+            Label("Saved work needs attention", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger)
+        } else if services.mode.isDemo {
             Label("On this iPhone", systemImage: "iphone").labelStyle(.iconOnly).accessibilityLabel("Demo data is stored on this iPhone")
         } else if failed > 0 {
-            Label("\(failed) not saved", systemImage: "exclamationmark.icloud.fill").foregroundStyle(Theme.danger)
+            Label("\(failed) need sync recovery", systemImage: "exclamationmark.icloud.fill").foregroundStyle(Theme.danger)
         } else if !services.connectivity.isOnline {
             Label("Offline", systemImage: "icloud.slash").foregroundStyle(Theme.warning)
         } else if pendingDocs + pendingPhotos > 0 {
@@ -219,31 +225,43 @@ struct SyncStatusIndicator: View {
 struct SyncStatusView: View {
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
+    @State private var error: String?
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
+                    if let issue = services.store.persistenceIssue ?? services.photos.storageIssue ?? error {
+                        Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger)
+                    }
                     if services.mode.isDemo {
                         Label("Demo mode stores everything on this iPhone. Nothing is uploaded.", systemImage: "iphone")
                     } else {
                         LabeledContent("Connection", value: services.connectivity.isOnline ? "Online" : "Offline — changes are saved on this iPhone")
-                        LabeledContent("Changes waiting to sync", value: "\(services.store.currentPendingKeys.count + services.store.pendingRouteKeys.count)")
+                        LabeledContent("Changes waiting to sync", value: "\(services.store.currentPendingKeys.union(services.store.pendingRouteKeys).count)")
                         LabeledContent("Photos waiting to upload", value: "\(services.photos.pending.count)")
                     }
                 }
                 if let journal = services.journal, !journal.failed.isEmpty {
-                    Section("Not saved") {
+                    Section("Saved work needs sync recovery") {
                         ForEach(journal.failed) { entry in
                             VStack(alignment: .leading, spacing: Theme.Space.s) {
                                 Text(entry.label).font(.headline)
-                                Text(entry.lastError ?? "").font(.subheadline).foregroundStyle(.secondary)
+                                Text(entry.lastError ?? "").font(.subheadline).foregroundStyle(Theme.neutral)
                                 HStack {
-                                    if !entry.ops.isEmpty {
-                                        Button("Retry") { services.firestoreBackend?.retry(entry) }.buttonStyle(SecondaryButtonStyle())
+                                    if !entry.ops.isEmpty || journal.isProtectedCommand(entry.id) {
+                                        Button("Retry") {
+                                            Task {
+                                                guard await services.store.retrySavedCommand(entry.id).isCommitted else {
+                                                    error = services.store.persistenceIssue ?? "This saved change still needs recovery. Its intent has been preserved."
+                                                    return
+                                                }
+                                                error = nil
+                                            }
+                                        }.buttonStyle(SecondaryButtonStyle())
                                     }
-                                    Button(entry.ops.isEmpty ? "Dismiss" : "Discard", role: .destructive) { journal.discard(entry.id) }.buttonStyle(SecondaryButtonStyle())
                                 }
+                                Text("Saved intent stays on this iPhone until it is verified or recovered.").font(.footnote).foregroundStyle(Theme.neutral)
                             }
                             .padding(.vertical, Theme.Space.xs)
                         }

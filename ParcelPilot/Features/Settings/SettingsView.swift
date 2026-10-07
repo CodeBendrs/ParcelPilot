@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var deleting = false
     @State private var confirmErase = false
     @State private var error: String?
+    @AppStorage(PilotTelemetry.consentKey) private var pilotExecutionLogging = false
 
     var body: some View {
         NavigationStack {
@@ -48,6 +49,10 @@ struct SettingsView: View {
                     NavigationLink("What ParcelPilot stores") { PrivacyView() }
                     NavigationLink("Sync status") { SyncStatusView() }
                     NavigationLink("Configuration") { ConfigurationView() }
+                    Toggle("Pilot work and session logging on this iPhone", isOn: $pilotExecutionLogging)
+                        .accessibilityIdentifier("pilotSessionLogging")
+                    Text("Optional work-action and route-session counts are logged on this iPhone. No addresses, notes, tracking numbers, locations or account identifiers are included. Nothing is uploaded.")
+                        .font(.footnote).foregroundStyle(Theme.neutral)
                 }
 
                 if let error { Section { Banner(symbol: "exclamationmark.triangle", text: error, tone: .danger) } }
@@ -55,16 +60,18 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")
                     if services.mapStyle == .google || services.mode == .production {
-                        Text("Maps and routing by Google Maps Platform.").font(.footnote).foregroundStyle(.secondary)
+                        Text("Maps and routing by Google Maps Platform.").font(.footnote).foregroundStyle(Theme.neutral)
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.background)
             .navigationTitle("Settings")
             .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
                 Button("Sign out", role: .destructive) { signOut() }
             } message: {
-                let pending = services.store.currentPendingKeys.count + services.store.pendingRouteKeys.count + services.photos.pending.count
-                Text(pending > 0 ? "\(pending) change(s) or photo(s) haven't synced yet. Signing out now removes them from this iPhone. Connect to the internet first to keep them." : "Your routes stay in your account. This iPhone's copy is removed.")
+                let pending = services.store.currentPendingKeys.union(services.store.pendingRouteKeys).count + services.photos.pending.count
+                Text(pending > 0 ? "\(pending) change(s) or photo(s) haven't synced yet. Saved work stays on this iPhone for this account. Sign in with the same account to recover and sync it." : "Your routes stay in your account. Protected work on this iPhone remains bound to the same account.")
             }
             .confirmationDialog("Erase all demo data?", isPresented: $confirmErase, titleVisibility: .visible) {
                 Button("Erase", role: .destructive) { try? services.account.signOut() }
