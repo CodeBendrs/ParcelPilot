@@ -88,7 +88,7 @@ struct AddressSuggestionsSection: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(s.primaryText).foregroundStyle(.primary)
                 if let secondary = s.secondaryText {
-                    Text(secondary).font(.subheadline).foregroundStyle(.secondary)
+                    Text(secondary).font(.subheadline).foregroundStyle(Theme.neutral)
                 }
             }
             Spacer(minLength: 0)

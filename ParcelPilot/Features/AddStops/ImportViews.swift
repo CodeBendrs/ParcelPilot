@@ -94,7 +94,7 @@ struct CSVImportView: View {
                     } label: {
                         VStack(alignment: .leading) {
                             Text(hasHeader ? (rows.first?[safe: i] ?? "Column \(i + 1)") : "Column \(i + 1)").font(.body.weight(.semibold))
-                            Text(sample(i)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text(sample(i)).font(.caption).foregroundStyle(Theme.neutral).lineLimit(1)
                         }
                     }
                 }
@@ -167,6 +167,9 @@ struct ImportReviewView: View {
         List {
             Section {
                 LabeledContent("Ready", value: "\(importable.filter { include.contains($0.rowNumber) }.count)")
+                if let issue = services.store.persistenceIssue {
+                    Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger)
+                }
                 LabeledContent("With errors (skipped)", value: "\(candidates.count - importable.count)")
                 if verifying { ProgressView(value: Double(progress), total: Double(max(include.count, 1))) { Text("Checking addresses \(progress)/\(include.count)") } }
                 if !services.connectivity.isOnline {
@@ -232,7 +235,7 @@ struct ImportReviewView: View {
         let routeOps = ops.filter { if case .updateRoute = $0 { return true }; return false }
         ops.removeAll { if case .updateRoute = $0 { return true }; return false }
         if let last = routeOps.last { ops.append(last) }
-        services.store.commitPrepared(ops, label: "Import \(chosen.count) addresses")
+        guard services.store.commitPrepared(ops, label: "Import \(chosen.count) addresses").isCommitted else { return }
         toasts.show("Imported \(chosen.count) address\(chosen.count == 1 ? "" : "es")" + (review > 0 ? " · \(review) need review" : ""), symbol: "square.and.arrow.down", tone: review > 0 ? .warning : .success)
         onDone()
     }
@@ -251,7 +254,7 @@ struct ImportRow: View {
                     .foregroundStyle(candidate.isImportable ? Theme.brand : Theme.danger)
                     .font(.title3)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Row \(candidate.rowNumber)").font(.caption).foregroundStyle(.secondary)
+                    Text("Row \(candidate.rowNumber)").font(.caption).foregroundStyle(Theme.neutral)
                     Text(candidate.parsed.address.singleLine.isEmpty ? candidate.sourceText : candidate.parsed.address.singleLine).font(.subheadline).foregroundStyle(.primary)
                     ForEach(candidate.errors, id: \.self) { Text($0).font(.caption).foregroundStyle(Theme.danger) }
                     if let d = candidate.duplicateOfRow { Text("Same destination as row \(d) — included as another package if selected.").font(.caption).foregroundStyle(Theme.warning) }

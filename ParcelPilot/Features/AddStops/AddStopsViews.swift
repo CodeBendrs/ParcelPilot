@@ -40,7 +40,7 @@ struct AddStopsMenu: View {
             Image(systemName: symbol).font(.title3).foregroundStyle(Theme.brand).frame(width: 32).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline).foregroundStyle(.primary)
-                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                Text(detail).font(.subheadline).foregroundStyle(Theme.neutral)
             }
         }
         .frame(minHeight: Theme.minTouch + 8)
@@ -90,9 +90,18 @@ struct ManualAddView: View {
                         .listRowBackground(Color.clear)
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Search an address")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    if focused {
+                        Button("Done") { focused = false }.frame(minHeight: 44)
+                            .accessibilityLabel("Done typing").accessibilityIdentifier("manualKeyboardDone")
+                    }
+                }
+            }
             .onAppear { focused = true }
             .sheet(item: $confirmation) { box in
                 AddressConfirmationView(candidate: box.candidate) { outcome in
@@ -159,6 +168,7 @@ struct PlaceSearchView: View {
     @State private var searching = false
     @State private var error: String?
     @State private var suggestions = AddressSuggestionsModel()
+    @FocusState private var focused: Bool
 
     var body: some View {
         NavigationStack {
@@ -166,11 +176,15 @@ struct PlaceSearchView: View {
                 Section {
                     TextField("Address or postal code", text: $query)
                         .autocorrectionDisabled()
+                        .focused($focused)
+                        .submitLabel(.search)
+                        .accessibilityIdentifier("placeAddressField")
                         .onSubmit { Task { await search() } }
                         .onChange(of: query) { _, newValue in
                             suggestions.queryChanged(newValue, resolver: services.resolver, near: AddressSuggestionsModel.bias(for: services.store.current))
                         }
                     Button("Search") { Task { await search() } }.disabled(query.count < 3 || searching)
+                        .accessibilityIdentifier("placeSearch")
                 }
                 AddressSuggestionsSection(model: suggestions) { suggestion in
                     Task { await pick(suggestion) }
@@ -183,7 +197,7 @@ struct PlaceSearchView: View {
                     } label: {
                         VStack(alignment: .leading) {
                             Text(c.formattedAddress).foregroundStyle(.primary)
-                            Text(c.provider == .google ? "Google result" : c.provider.displayName).font(.caption).foregroundStyle(.secondary)
+                            Text(c.provider == .google ? "Google result" : c.provider.displayName).font(.caption).foregroundStyle(Theme.neutral)
                         }
                         .frame(minHeight: Theme.minTouch)
                     }
@@ -195,17 +209,31 @@ struct PlaceSearchView: View {
                         dismiss()
                     }
                     .disabled(query.count < 3)
+                    .accessibilityIdentifier("useTypedPlace")
                 } footer: {
                     Text("Without a verified location the route can't be optimized from this place — use your current location instead, or search again online.")
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    if focused {
+                        Button("Done") { focused = false }
+                            .accessibilityLabel("Done typing")
+                            .accessibilityIdentifier("placeKeyboardDone")
+                    }
+                }
+            }
+            .onAppear { focused = true }
         }
     }
 
     private func search() async {
+        guard query.count >= 3, !searching else { return }
+        focused = false
         searching = true
         error = nil
         defer { searching = false }
@@ -250,7 +278,7 @@ struct PlaceSearchView: View {
 /// is driver data, not provider content.
 struct PinPlacementView: View {
     var initial: GeoPoint?
-    var onPick: (GeoPoint) -> Void
+    var onPick: (GeoPoint) -> Bool
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
     @State private var center: GeoPoint?
@@ -277,6 +305,9 @@ struct PinPlacementView: View {
             .ignoresSafeArea(edges: .bottom)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: Theme.Space.s) {
+                    if let issue = services.store.persistenceIssue {
+                        Banner(symbol: "exclamationmark.triangle", text: issue, tone: .danger)
+                    }
                     Text("Move the map so the pin is on the delivery door.").font(.subheadline)
                     Button {
                         Task {
@@ -286,7 +317,7 @@ struct PinPlacementView: View {
                         }
                     } label: { Label(locating ? "Locating…" : "I'm at the delivery spot", systemImage: "location") }
                         .buttonStyle(SecondaryButtonStyle())
-                    Button { if let center { onPick(center); dismiss() } } label: { Text("Use this location") }
+                    Button { if let center, onPick(center) { dismiss() } } label: { Text("Use this location") }
                         .buttonStyle(PrimaryActionButtonStyle())
                         .disabled(center == nil)
                 }
@@ -303,6 +334,7 @@ struct PinPlacementView: View {
 struct GooglePinMap: UIViewRepresentable {
     @Binding var center: GeoPoint?
     var initial: GeoPoint?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeCoordinator() -> Coordinator { Coordinator(center: $center) }
 
@@ -317,7 +349,7 @@ struct GooglePinMap: UIViewRepresentable {
 
     func updateUIView(_ map: GMSMapView, context: Context) {
         if let c = center, context.coordinator.lastSet != c, context.coordinator.userMoved == false {
-            map.animate(toLocation: CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude))
+            if reduceMotion { map.moveCamera(GMSCameraUpdate.setTarget(CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude))) } else { map.animate(toLocation: CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude)) }
         }
     }
 

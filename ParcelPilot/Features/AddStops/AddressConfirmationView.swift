@@ -15,11 +15,13 @@ struct AddressConfirmationView: View {
     @State private var verifying = false
     @State private var pinning = false
     @State private var duplicateWarning: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Form {
+                List {
+                    Section { matchMap.listRowInsets(EdgeInsets()) }
                     if !candidate.alternatives.isEmpty { choiceSection }
                     signalsSection
                     if let label = candidate.fromLabel, !candidate.driverEdited || candidate.verification != nil { comparisonSection(label) }
@@ -28,14 +30,18 @@ struct AddressConfirmationView: View {
                     placementSection
                     packageSection
                     actionsSection
+                    if let duplicateWarning {
+                        Section { Banner(symbol: "exclamationmark.triangle", text: duplicateWarning, tone: .danger) }
+                    }
                 }
+                .listStyle(.plain).scrollContentBackground(.hidden).background(Theme.panel)
                 addAction
                     .padding(.horizontal, Theme.Space.l)
                     .padding(.vertical, Theme.Space.s)
                     .background(Theme.elevated)
             }
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle(candidate.source == .scan ? "Confirm label" : "Confirm address")
+            .navigationTitle(candidate.decision(allowSynthetic: services.verifier.allowsSynthetic).autoAcceptable ? "Confirm label" : "Review address")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { onFinish(.cancelled); dismiss() } }
@@ -44,6 +50,7 @@ struct AddressConfirmationView: View {
             .sheet(isPresented: $pinning) {
                 PinPlacementView(initial: candidate.driverPin ?? candidate.verification?.assessment?.candidate?.location) { point in
                     candidate.driverPin = point
+                    return true
                 }
             }
         }
@@ -85,7 +92,9 @@ struct AddressConfirmationView: View {
             if let r = candidate.recognition, !candidate.driverEdited {
                 SignalRow(title: "Text recognition", value: r.label, detail: candidate.uncertainFields.isEmpty ? "Recognizer's own reading quality, not a probability that the address is right." : "Uncertain: \(candidate.uncertainFields.map(\.label).joined(separator: ", ")). Check against the label.", symbol: r.symbol, tone: r.tone)
             } else if candidate.driverEdited {
-                SignalRow(title: "Text", value: "Typed by you", detail: nil, symbol: "keyboard", tone: .info)
+                SignalRow(title: "Text recognition", value: "Typed by you", detail: "You entered this text; it was not read from a label.", symbol: "keyboard", tone: .info)
+            } else {
+                SignalRow(title: "Text recognition", value: "Not read", detail: "Check the text on the label.", symbol: "text.viewfinder", tone: .neutral)
             }
             SignalRow(title: "Address completeness", value: completeness.label, detail: completeness.isComplete ? nil : "Nothing is filled in automatically — add what's missing from the label.", symbol: completeness.isComplete ? "checkmark.circle" : "exclamationmark.circle", tone: completeness.isComplete ? .success : .warning)
             matchSignal
@@ -96,9 +105,9 @@ struct AddressConfirmationView: View {
 
     @ViewBuilder private var matchSignal: some View {
         if let pin = candidate.driverPin {
-            SignalRow(title: "Location", value: "Pin placed by you", detail: String(format: "%.5f, %.5f", pin.latitude, pin.longitude), symbol: "mappin", tone: .success)
+            SignalRow(title: "Map match", value: "Pin placed by you", detail: String(format: "%.5f, %.5f", pin.latitude, pin.longitude), symbol: "mappin", tone: .success)
         } else if verifying {
-            HStack { ProgressView(); Text("Checking the address…").foregroundStyle(.secondary) }.frame(minHeight: Theme.minTouch)
+            SignalRow(title: "Map match", value: "Checking map…", detail: "Wait for the address check before confirming.", symbol: "map", tone: .neutral)
         } else if let v = candidate.verification {
             if let a = v.assessment {
                 SignalRow(title: "Map match", value: a.quality.label + (a.ambiguous ? " (several buildings)" : ""), detail: matchDetail(a), symbol: a.quality.symbol, tone: a.quality.tone)
@@ -126,13 +135,13 @@ struct AddressConfirmationView: View {
     private func comparisonSection(_ label: DraftCandidate) -> some View {
         Section {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
-                Text("On the label").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text("On the label").font(.caption.weight(.semibold)).foregroundStyle(Theme.neutral)
                 Text(label.rawLines.joined(separator: "\n")).font(.body.monospaced()).textSelection(.enabled)
-                if let evidence = label.roleEvidence { Text(evidence).font(.caption).foregroundStyle(.secondary) }
+                if let evidence = label.roleEvidence { Text(evidence).font(.caption).foregroundStyle(Theme.neutral) }
             }
             if let a = candidate.verification?.assessment, let c = a.candidate, a.quality != .notFound {
                 VStack(alignment: .leading, spacing: Theme.Space.s) {
-                    Text(c.provider == .google ? "Map result (Google)" : "Map result (\(c.provider.displayName))").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(c.provider == .google ? "Map result (Google)" : "Map result (\(c.provider.displayName))").font(.caption.weight(.semibold)).foregroundStyle(Theme.neutral)
                     Text(c.formattedAddress).font(.body)
                 }
                 ForEach(a.differences, id: \.self) { d in
@@ -144,14 +153,16 @@ struct AddressConfirmationView: View {
         }
     }
 
+    private var fieldLayout: AnyLayout { dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8)) }
+
     private var fieldsSection: some View {
         Section {
             field("Recipient", \.recipientName)
-            HStack {
+            fieldLayout {
                 field("Unit / apt", \.unit).accessibilityIdentifier("field.unit")
                 field("Type (Apt, App., Suite)", \.unitDesignator)
             }
-            HStack {
+            fieldLayout {
                 field("Number", \.civicNumber).keyboardType(.numbersAndPunctuation).frame(maxWidth: 110).accessibilityIdentifier("field.civic")
                 field("Street", \.streetName).accessibilityIdentifier("field.street")
             }
@@ -171,7 +182,7 @@ struct AddressConfirmationView: View {
             } label: {
                 Label("Check this address", systemImage: "checkmark.magnifyingglass")
             }
-            .disabled(verifying)
+            .disabled(verifying || !services.connectivity.isOnline)
             .frame(minHeight: Theme.minTouch)
         } header: {
             Text("Delivery address")
@@ -181,11 +192,45 @@ struct AddressConfirmationView: View {
     }
 
     private func field(_ title: String, _ keyPath: WritableKeyPath<PostalAddress, String?>) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+        let problem = fieldNeedsReview(keyPath)
+        return VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text(title).font(.footnote).foregroundStyle(problem ? Theme.warning : Theme.neutral)
             TextField(title, text: Binding(get: { candidate.address[keyPath: keyPath] ?? "" }, set: { candidate.address[keyPath: keyPath] = $0.isEmpty ? nil : $0; edited() }))
                 .autocorrectionDisabled()
                 .frame(minHeight: Theme.minTouch)
+                .padding(.horizontal, 8)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(problem ? Theme.warning : Theme.hairline, lineWidth: problem ? 2 : 1))
+        }
+    }
+
+    private func fieldNeedsReview(_ keyPath: WritableKeyPath<PostalAddress, String?>) -> Bool {
+        let completeness = AddressCompleteness(issues: candidate.parsed.issues)
+        let map: [WritableKeyPath<PostalAddress, String?>: AddressField] = [\.civicNumber: .civicNumber, \.streetName: .street, \.municipality: .municipality, \.postalCode: .postalCode]
+        if let field = map[keyPath], completeness.missing.contains(field) || (!candidate.driverEdited && candidate.uncertainFields.contains(field)) { return true }
+        return keyPath == \.unit && candidate.fromLabel != nil && (candidate.address.unit?.isEmpty ?? true) && candidate.fromLabel!.rawLines.joined(separator: " ").localizedCaseInsensitiveContains("UNIT")
+    }
+
+    private var matchMap: some View {
+        let point = candidate.driverPin ?? candidate.verification?.assessment?.candidate?.location
+        return ZStack {
+            Group {
+                switch services.mapStyle {
+                case .google: GooglePinMap(center: .constant(point), initial: point)
+                case .apple: ApplePinMap(center: .constant(point), initial: point)
+                case .googleUnavailable: Color.clear.overlay { Text("Map not configured").font(.subheadline) }
+                }
+            }.allowsHitTesting(false)
+            if point != nil { Image(systemName: "mappin.circle.fill").font(.title).foregroundStyle(Theme.warning) }
+        }
+        .frame(height: 170)
+        .overlay(alignment: .topLeading) {
+            Text(candidate.driverPin != nil ? "Pin placed by you" : candidate.verification?.assessment?.quality.label ?? "Map not checked")
+                .font(.footnote.bold()).padding(8).background(Theme.panel, in: Capsule()).padding(8)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Button { pinning = true } label: { Label("Place pin", systemImage: "mappin.and.ellipse") }
+                .buttonStyle(SecondaryButtonStyle()).padding(8).accessibilityIdentifier("placeStopPin")
         }
     }
 
@@ -226,7 +271,7 @@ struct AddressConfirmationView: View {
                     Label("Adds a new stop.", systemImage: "plus.circle").font(.subheadline)
                 }
                 if !others.isEmpty, placement == .newStop {
-                    Label("Another unit in this building is already on the route — this stays a separate stop.", systemImage: "building.2").font(.subheadline).foregroundStyle(.secondary)
+                    Label("Another unit in this building is already on the route — this stays a separate stop.", systemImage: "building.2").font(.subheadline).foregroundStyle(Theme.neutral)
                 }
             }
         }
@@ -255,15 +300,9 @@ struct AddressConfirmationView: View {
             let (status, _, _) = candidate.confirmedStop(verifier: services.verifier)
             if !decision.autoAcceptable {
                 Text("Will be added as “\(status.label)”." + (status == .verified || status == .driverConfirmed || status == .demoSynthetic ? "" : " It stays on the route but isn't optimized until the address is fixed."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(Theme.neutral)
             }
             if candidate.source == .scan {
-                Button("Save for review later") {
-                    services.drafts.upsert(candidate.asDraft(allowSynthetic: services.verifier.allowsSynthetic))
-                    onFinish(.savedForReview)
-                    dismiss()
-                }
-                .frame(maxWidth: .infinity, minHeight: Theme.minTouch)
                 Button("Discard", role: .destructive) {
                     if let id = candidate.draftID { services.drafts.remove(id) }
                     onFinish(.discarded)
@@ -277,11 +316,28 @@ struct AddressConfirmationView: View {
 
     private var addAction: some View {
         let (status, _, _) = candidate.confirmedStop(verifier: services.verifier)
-        let title = status == .needsReview || status == .unresolvable ? "Add with address warning" : "Add to route"
-        return Button(action: add) { Label(title, systemImage: "plus.circle.fill") }
-            .buttonStyle(PrimaryActionButtonStyle())
-            .disabled(verifying || (candidate.address.streetName == nil && candidate.address.deliveryInstallation == nil))
-            .accessibilityIdentifier("addToRoute")
+        let unresolved = [.needsReview, .unresolvable, .pendingVerification].contains(status)
+        let title = unresolved ? "Add with warning" : "Add to route"
+        return VStack(alignment: .leading, spacing: 8) {
+            if unresolved {
+                Text(candidate.decision(allowSynthetic: services.verifier.allowsSynthetic).reasons.first?.explanation ?? "Check the address or place a pin to clear the warning.")
+                    .font(.footnote).foregroundStyle(Theme.warning).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .accessibilityShowsLargeContentViewer()
+            }
+            let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            layout {
+                if unresolved {
+                    Button("Save for review") {
+                        services.drafts.upsert(candidate.asDraft(allowSynthetic: services.verifier.allowsSynthetic))
+                        onFinish(.savedForReview); dismiss()
+                    }.buttonStyle(ActionButtonStyle()).accessibilityIdentifier("saveForReview")
+                }
+                Button(action: add) { Label(title, systemImage: "plus") }
+                    .buttonStyle(ActionButtonStyle(tint: Theme.onBrand, fill: unresolved ? Theme.warning : Theme.brand, height: 52))
+                    .disabled(verifying || (candidate.address.streetName == nil && candidate.address.deliveryInstallation == nil))
+                    .accessibilityIdentifier("addToRoute")
+            }
+        }
     }
 
     // MARK: Actions
@@ -302,6 +358,11 @@ struct AddressConfirmationView: View {
         }
         let (status, resolution, reasons) = candidate.confirmedStop(verifier: services.verifier)
         let result = services.store.addDelivery(to: snapshot, address: candidate.address, status: status, resolution: resolution, reviewReasons: reasons, packages: [candidate.package], source: candidate.source)
+        guard result.acknowledgement.isCommitted else {
+            duplicateWarning = services.store.persistenceIssue ?? "This address couldn't be saved on this iPhone. Try again."
+            Haptics.error()
+            return
+        }
         if let id = candidate.draftID { services.drafts.remove(id) }
         switch result.placement {
         case .duplicateTracking:
@@ -329,9 +390,9 @@ struct SignalRow: View {
         HStack(alignment: .top, spacing: Theme.Space.m) {
             Image(systemName: symbol).foregroundStyle(tone.color).font(.title3).frame(width: 28).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(title).font(.caption.weight(.semibold)).foregroundStyle(Theme.neutral)
                 Text(value).font(.body.weight(.semibold)).foregroundStyle(tone.color)
-                if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                if let detail { Text(detail).font(.caption).foregroundStyle(Theme.neutral).fixedSize(horizontal: false, vertical: true) }
             }
         }
         .padding(.vertical, 2)
@@ -355,7 +416,7 @@ struct StorageLocationPicker: View {
                             .font(.subheadline)
                             .padding(.horizontal, 12)
                             .frame(minHeight: Theme.minTouch)
-                            .background(location == q ? Theme.teal.opacity(0.25) : Theme.brandSoft, in: Capsule())
+                            .background(location == q ? Theme.brand.opacity(0.25) : Theme.brandSoft, in: Capsule())
                             .buttonStyle(.plain)
                             .accessibilityAddTraits(location == q ? .isSelected : [])
                     }
